@@ -1,0 +1,12 @@
+{
+    "guild_id_1": {
+      "ticket_category_ids": [123456789012345678, 987654321098765432],
+      "monitor_channels": [111111111111111111, 222222222222222222],
+      "tg_channel_id": "@your_telegram_channel"
+    },
+    "guild_id_2": {
+      "ticket_category_ids": [333333333333333333],
+      "monitor_channels": [444444444444444444],
+      "tg_channel_id": "@another_telegram_channel"
+    }
+  }
