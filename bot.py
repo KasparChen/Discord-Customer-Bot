@@ -4,6 +4,7 @@ import asyncio
 import datetime
 import json
 import os
+import logging
 import traceback
 from dotenv import load_dotenv
 import telegram
@@ -14,15 +15,22 @@ from langchain_community.chat_models import ChatOpenAI
 from langchain.schema import HumanMessage, SystemMessage
 from pydantic import BaseModel
 from langchain.output_parsers import PydanticOutputParser
+import aiohttp
+from discord import ClientException
+import ssl
+
+# 设置日志
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+# 清理环境变量
+if 'SSL_CERT_FILE' in os.environ:
+    del os.environ['SSL_CERT_FILE']
 
 # 加载 .env 文件
 load_dotenv()
 
-print("脚本开始运行...")
-
-# 清理可能导致问题的环境变量
-if 'SSL_CERT_FILE' in os.environ:
-    del os.environ['SSL_CERT_FILE']
+logger.info("脚本开始运行...")
 
 # 配置项
 DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
@@ -31,6 +39,7 @@ MODEL_ID = os.getenv('MODEL_ID')
 LLM_API_KEY = os.getenv('LLM_API_KEY')
 BASE_URL = 'https://ark.cn-beijing.volces.com/api/v3'
 CONFIG_FILE = 'config.json'
+CA_CERT_PATH = '/opt/homebrew/etc/openssl@3/cert.pem'
 
 # 加载配置文件
 if os.path.exists(CONFIG_FILE):
@@ -38,7 +47,8 @@ if os.path.exists(CONFIG_FILE):
         CONFIG = json.load(f)
 else:
     CONFIG = {
-        'telegram_users': {}
+        'telegram_users': {},
+        'guilds': {}
     }
 
 # 保存配置文件
@@ -50,6 +60,7 @@ def save_config():
 intents = discord.Intents.default()
 intents.message_content = True
 intents.guilds = True
+intents.guild_messages = True
 
 # 创建 Discord Bot 实例
 discord_bot = commands.Bot(command_prefix='/', intents=intents)
@@ -57,9 +68,13 @@ discord_bot = commands.Bot(command_prefix='/', intents=intents)
 # 创建 Telegram Bot 实例
 telegram_bot = telegram.Bot(
     token=TELEGRAM_TOKEN,
-    request=HTTPXRequest(http_version="1.1", connection_pool_size=10)
+    request=HTTPXRequest(
+        http_version="1.1",
+        connection_pool_size=10,
+        ssl_context=CA_CERT_PATH if os.path.exists(CA_CERT_PATH) else None
+    )
 )
-print("Telegram Bot 已初始化")
+logger.info("Telegram Bot 已初始化")
 
 # 定义问题表单的结构
 class Problem(BaseModel):
@@ -74,33 +89,44 @@ class Problem(BaseModel):
 # Discord 机器人启动事件
 @discord_bot.event
 async def on_ready():
-    print(f'Discord 机器人已登录为 {discord_bot.user}')
-    for guild in discord_bot.guilds:
-        if str(guild.id) not in CONFIG:
-            CONFIG[str(guild.id)] = {
-                'ticket_category_ids': [],
-                'monitor_channels': []
-            }
-    save_config()
+    logger.info(f'Discord 机器人已登录为 {discord_bot.user}')
     discord_bot.loop.create_task(periodic_analysis())
+
+# Discord 事件：新频道创建
+@discord_bot.event
+async def on_guild_channel_create(channel):
+    guild_id = str(channel.guild.id)
+    config = CONFIG.get('guilds', {}).get(guild_id, {})
+    if channel.category_id in config.get('ticket_category_ids', []):
+        logger.info(f"检测到新 Ticket 频道: {channel.name} (ID: {channel.id}) 在类别 {channel.category_id}")
+    elif channel.category_id in config.get('monitor_category_ids', []):
+        logger.info(f"检测到新监控频道: {channel.name} (ID: {channel.id}) 在类别 {channel.category_id}")
 
 # Discord 命令：设置 Ticket 类别 ID
 @discord_bot.command(name='set_ticket_cate')
 async def set_ticket_cate(ctx, *, category_ids: str):
     guild_id = str(ctx.guild.id)
     ids = [int(id.strip()) for id in category_ids.split(',')]
-    CONFIG[guild_id]['ticket_category_ids'] = ids
+    if 'guilds' not in CONFIG:
+        CONFIG['guilds'] = {}
+    if guild_id not in CONFIG['guilds']:
+        CONFIG['guilds'][guild_id] = {}
+    CONFIG['guilds'][guild_id]['ticket_category_ids'] = ids
     save_config()
     await ctx.send(f'Ticket 类别 ID 已设置为: {ids}')
 
-# Discord 命令：设置监控频道 ID
-@discord_bot.command(name='set_monitor_channels')
-async def set_monitor_channels(ctx, *, channel_ids: str):
+# Discord 命令：设置监控类别 ID（而非具体频道）
+@discord_bot.command(name='set_monitor_categories')
+async def set_monitor_categories(ctx, *, category_ids: str):
     guild_id = str(ctx.guild.id)
-    ids = [int(id.strip()) for id in channel_ids.split(',')]
-    CONFIG[guild_id]['monitor_channels'] = ids
+    ids = [int(id.strip()) for id in category_ids.split(',')]
+    if 'guilds' not in CONFIG:
+        CONFIG['guilds'] = {}
+    if guild_id not in CONFIG['guilds']:
+        CONFIG['guilds'][guild_id] = {}
+    CONFIG['guilds'][guild_id]['monitor_category_ids'] = ids
     save_config()
-    await ctx.send(f'监控频道 ID 已设置为: {ids}')
+    await ctx.send(f'监控类别 ID 已设置为: {ids}')
 
 # Discord 命令：获取当前 Discord 服务器 ID
 @discord_bot.command(name='get_server_id')
@@ -115,7 +141,7 @@ async def on_message(message):
         return
 
     guild_id = str(message.guild.id)
-    config = CONFIG.get(guild_id, {})
+    config = CONFIG.get('guilds', {}).get(guild_id, {})
 
     if is_ticket_channel(message.channel, config):
         conversation = await get_conversation(message.channel)
@@ -124,7 +150,7 @@ async def on_message(message):
             for tg_user, settings in CONFIG['telegram_users'].items():
                 if guild_id in settings.get('guild_ids', []):
                     await send_problem_form(problem, settings['tg_channel_id'])
-    elif message.channel.id in config.get('monitor_channels', []):
+    elif is_monitor_channel(message.channel, config):
         pass  # 监控频道通过定期分析处理
 
     await discord_bot.process_commands(message)
@@ -132,6 +158,10 @@ async def on_message(message):
 # 判断是否为 Ticket 频道
 def is_ticket_channel(channel, config):
     return channel.category_id in config.get('ticket_category_ids', [])
+
+# 判断是否为监控类别下的频道
+def is_monitor_channel(channel, config):
+    return channel.category_id in config.get('monitor_category_ids', [])
 
 # 获取频道对话内容
 async def get_conversation(channel):
@@ -147,6 +177,7 @@ async def get_conversation(channel):
 # 使用 LLM 分析对话并提取问题
 def analyze_conversation(conversation, channel, guild_id):
     conversation_text = "\n".join([f"{msg['user']}: {msg['content']}" for msg in conversation])
+    logger.info(f"Analyzing conversation in guild {guild_id}")
 
     llm = ChatOpenAI(
         openai_api_key=LLM_API_KEY,
@@ -180,10 +211,10 @@ def analyze_conversation(conversation, channel, guild_id):
             HumanMessage(content=user_prompt)
         ])
         problem = parser.parse(response.content)
-        problem.source = 'Ticket' if is_ticket_channel(channel, CONFIG[guild_id]) else 'General Chat'
+        problem.source = 'Ticket' if is_ticket_channel(channel, CONFIG.get('guilds', {}).get(guild_id, {})) else 'General Chat'
         return problem.dict()
     except Exception as e:
-        print(f"LLM 分析出错: {e}")
+        logger.error(f"LLM 分析出错: {e}")
         return None
 
 # 发送问题表单到 Telegram
@@ -199,33 +230,38 @@ async def send_problem_form(problem, tg_channel_id):
             f"**问题原文**: {problem['original']}\n"
         )
         await telegram_bot.send_message(chat_id=tg_channel_id, text=form)
-        print(f"已发送问题表单: {problem['summary']}")
+        logger.info(f"已发送问题表单: {problem['summary']}")
 
-# 定期分析监控频道
+# 定期分析监控类别下的频道
 async def periodic_analysis():
     while True:
-        for guild_id, config in CONFIG.items():
-            for channel_id in config.get('monitor_channels', []):
-                channel = discord_bot.get_channel(channel_id)
-                if channel:
-                    since = datetime.datetime.utcnow() - datetime.timedelta(hours=2)
-                    messages = []
-                    async for msg in channel.history(after=since):
-                        messages.append({
-                            'user': msg.author.name,
-                            'content': msg.content,
-                            'timestamp': msg.created_at.isoformat()
-                        })
-                    if messages:
-                        problem = analyze_conversation(messages, channel, guild_id)
-                        if problem:
-                            for tg_user, settings in CONFIG['telegram_users'].items():
-                                if guild_id in settings.get('guild_ids', []):
-                                    await send_problem_form(problem, settings['tg_channel_id'])
+        for guild_id, config in CONFIG.get('guilds', {}).items():
+            guild = discord_bot.get_guild(int(guild_id))
+            if not guild:
+                continue
+            for category_id in config.get('monitor_category_ids', []):
+                category = discord.utils.get(guild.categories, id=category_id)
+                if category:
+                    for channel in category.text_channels:
+                        since = datetime.datetime.utcnow() - datetime.timedelta(hours=2)
+                        messages = []
+                        async for msg in channel.history(after=since):
+                            messages.append({
+                                'user': msg.author.name,
+                                'content': msg.content,
+                                'timestamp': msg.created_at.isoformat()
+                            })
+                        if messages:
+                            problem = analyze_conversation(messages, channel, guild_id)
+                            if problem:
+                                for tg_user, settings in CONFIG['telegram_users'].items():
+                                    if guild_id in settings.get('guild_ids', []):
+                                        await send_problem_form(problem, settings['tg_channel_id'])
         await asyncio.sleep(7200)  # 每 2 小时运行一次
 
 # Telegram 命令：设置监听的 Discord 服务器 ID
 async def set_discord_guild(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    logger.info("Received /set_discord_guild command")
     tg_user_id = str(update.effective_user.id)
     guild_id = context.args[0]
     if tg_user_id not in CONFIG['telegram_users']:
@@ -236,6 +272,7 @@ async def set_discord_guild(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 # Telegram 命令：设置 Telegram 推送频道 ID
 async def set_tg_channel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    logger.info("Received /set_tg_channel command")
     tg_user_id = str(update.effective_user.id)
     tg_channel_id = context.args[0]
     if tg_user_id not in CONFIG['telegram_users']:
@@ -246,26 +283,37 @@ async def set_tg_channel(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 
 # Telegram 命令：获取当前 Telegram 群组/频道 ID
 async def get_tg_group_id(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    logger.info("Received /get_tg_group_id command")
     chat_id = update.effective_chat.id
     await update.message.reply_text(f'当前 Telegram 群组/频道 ID: {chat_id}')
 
-# 主函数：运行 Discord 和 Telegram
+# 主循环运行 Telegram 和 Discord
 async def main():
-    # 启动 Telegram Bot
+    # 配置 Telegram Bot
     application = Application.builder().token(TELEGRAM_TOKEN).build()
     application.add_handler(CommandHandler('set_discord_guild', set_discord_guild))
     application.add_handler(CommandHandler('set_tg_channel', set_tg_channel))
     application.add_handler(CommandHandler('get_tg_group_id', get_tg_group_id))
     await application.initialize()
     await application.start()
-    print("Telegram Bot 已启动")
+    logger.info("Telegram Bot 已启动")
 
-    # 启动 Discord Bot
-    await discord_bot.start(DISCORD_TOKEN)
+    # 创建自定义 aiohttp 会话
+    ssl_context = ssl.create_default_context(cafile=CA_CERT_PATH) if os.path.exists(CA_CERT_PATH) else ssl.create_default_context()
+    ssl_context.set_ciphers('DEFAULT:@SECLEVEL=1')
+    session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ssl_context))
+    discord_bot.http._HTTPClient__session = session
 
-# 运行主函数
-try:
-    asyncio.run(main())
-except Exception as e:
-    print(f"发生错误: {e}")
-    traceback.print_exc()
+    # 启动 Discord 和 Telegram 的异步任务
+    discord_task = asyncio.create_task(discord_bot.start(DISCORD_TOKEN))
+    telegram_task = asyncio.create_task(application.run_polling())
+
+    # 等待两个任务完成
+    await asyncio.gather(discord_task, telegram_task)
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except Exception as e:
+        logger.error(f"主程序发生错误: {e}")
+        traceback.print_exc()
