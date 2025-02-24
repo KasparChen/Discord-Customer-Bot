@@ -17,7 +17,6 @@ from pydantic import BaseModel
 from langchain.output_parsers import PydanticOutputParser
 import aiohttp
 from discord import ClientException
-import ssl
 
 # 设置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -39,7 +38,6 @@ MODEL_ID = os.getenv('MODEL_ID')
 LLM_API_KEY = os.getenv('LLM_API_KEY')
 BASE_URL = 'https://ark.cn-beijing.volces.com/api/v3'
 CONFIG_FILE = 'config.json'
-CA_CERT_PATH = '/opt/homebrew/etc/openssl@3/cert.pem'
 
 # 加载配置文件
 if os.path.exists(CONFIG_FILE):
@@ -286,8 +284,8 @@ async def get_tg_group_id(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     chat_id = update.effective_chat.id
     await update.message.reply_text(f'当前 Telegram 群组/频道 ID: {chat_id}')
 
-# 主循环运行 Telegram 和 Discord
-async def main():
+# 主函数：运行 Discord 和 Telegram
+async def main(loop):
     # 配置 Telegram Bot
     application = Application.builder().token(TELEGRAM_TOKEN).build()
     application.add_handler(CommandHandler('set_discord_guild', set_discord_guild))
@@ -298,21 +296,22 @@ async def main():
     logger.info("Telegram Bot 已启动")
 
     # 创建自定义 aiohttp 会话
-    ssl_context = ssl.create_default_context(cafile=CA_CERT_PATH) if os.path.exists(CA_CERT_PATH) else ssl.create_default_context()
-    ssl_context.set_ciphers('DEFAULT:@SECLEVEL=1')
-    session = aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ssl_context))
+    session = aiohttp.ClientSession()
     discord_bot.http._HTTPClient__session = session
 
-    # 启动 Discord 和 Telegram 的异步任务
-    discord_task = asyncio.create_task(discord_bot.start(DISCORD_TOKEN))
-    telegram_task = asyncio.create_task(application.run_polling())
+    # 启动 Discord 和 Telegram
+    discord_task = loop.create_task(discord_bot.start(DISCORD_TOKEN))
+    telegram_task = loop.create_task(application.run_polling())
 
-    # 等待两个任务完成
+    # 等待任务完成
     await asyncio.gather(discord_task, telegram_task)
 
 if __name__ == "__main__":
+    loop = asyncio.get_event_loop()
     try:
-        asyncio.run(main())
+        loop.run_until_complete(main(loop))
     except Exception as e:
         logger.error(f"主程序发生错误: {e}")
         traceback.print_exc()
+    finally:
+        loop.close()
