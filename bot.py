@@ -70,8 +70,7 @@ telegram_bot = telegram.Bot(
     token=TELEGRAM_TOKEN,
     request=HTTPXRequest(
         http_version="1.1",
-        connection_pool_size=10,
-        ssl_context=CA_CERT_PATH if os.path.exists(CA_CERT_PATH) else None
+        connection_pool_size=10
     )
 )
 logger.info("Telegram Bot 已初始化")
@@ -115,7 +114,7 @@ async def set_ticket_cate(ctx, *, category_ids: str):
     save_config()
     await ctx.send(f'Ticket 类别 ID 已设置为: {ids}')
 
-# Discord 命令：设置监控类别 ID（而非具体频道）
+# Discord 命令：设置监控类别 ID
 @discord_bot.command(name='set_monitor_categories')
 async def set_monitor_categories(ctx, *, category_ids: str):
     guild_id = str(ctx.guild.id)
