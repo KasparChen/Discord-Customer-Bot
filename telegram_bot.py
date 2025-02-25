@@ -151,7 +151,7 @@ class TelegramBot:
         """启动 Telegram Bot 的主循环"""
         logger.info("Telegram Bot 启动中...")
         # 注册命令处理器
-        self.application.add_handler(CommandHandler('get_tg_group_id', self.get_tg_group_id))
+        self.application.add_handler(CommandHandler('get_group_id', self.get_group_id))
         self.application.add_handler(CommandHandler('current_binding', self.current_binding))
         # 启动定期分析任务
         asyncio.create_task(self.periodic_general_analysis())
