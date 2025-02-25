@@ -9,7 +9,6 @@ import threading
 from dotenv import load_dotenv
 from telegram.ext import Application, CommandHandler, ContextTypes
 from telegram import Update
-from telegram.request import HTTPXRequest
 from langchain_community.chat_models import ChatOpenAI
 from langchain.schema import HumanMessage, SystemMessage
 from pydantic import BaseModel
@@ -90,12 +89,49 @@ async def on_message(message):
 # Discord 命令
 @discord_bot.command()
 async def set_ticket_cate(ctx, *, category_ids: str):
+    """设置 Discord 服务器的 Ticket 类别 ID"""
     guild_id = str(ctx.guild.id)
-    ids = [int(id.strip()) for id in category_ids.split(',')]
+    try:
+        ids = [int(id.strip()) for id in category_ids.split(',')]
+        with config_lock:
+            CONFIG.setdefault('guilds', {}).setdefault(guild_id, {})['ticket_category_ids'] = ids
+            save_config()
+        await ctx.send(f'Ticket 类别 ID 已设置为: {ids}')
+    except ValueError:
+        await ctx.send("输入错误，请提供有效的类别 ID（用逗号分隔）。")
+
+# Telegram 命令处理器
+async def set_discord_guild(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """绑定 Discord 服务器 ID 到 Telegram 用户"""
+    tg_user_id = str(update.effective_user.id)
+    if not context.args:
+        await update.message.reply_text("请提供 Discord 服务器 ID，例如：/set_discord_guild 123456789")
+        return
+    guild_id = context.args[0]
     with config_lock:
-        CONFIG.setdefault('guilds', {}).setdefault(guild_id, {})['ticket_category_ids'] = ids
+        CONFIG.setdefault('telegram_users', {}).setdefault(tg_user_id, {'guild_ids': [], 'tg_channel_id': ''})['guild_ids'].append(guild_id)
         save_config()
-    await ctx.send(f'Ticket 类别 ID 已设置为: {ids}')
+    logger.info(f"用户 {tg_user_id} 添加了 Discord 服务器 ID: {guild_id}")
+    await update.message.reply_text(f'已添加监听 Discord 服务器 ID: {guild_id}')
+
+async def set_tg_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """设置 Telegram 推送频道 ID"""
+    tg_user_id = str(update.effective_user.id)
+    if not context.args:
+        await update.message.reply_text("请提供 Telegram 频道 ID，例如：/set_tg_channel -100123456789")
+        return
+    tg_channel_id = context.args[0]
+    with config_lock:
+        CONFIG.setdefault('telegram_users', {}).setdefault(tg_user_id, {'guild_ids': [], 'tg_channel_id': ''})['tg_channel_id'] = tg_channel_id
+        save_config()
+    logger.info(f"用户 {tg_user_id} 设置 Telegram 推送频道为: {tg_channel_id}")
+    await update.message.reply_text(f'已设置 Telegram 推送频道: {tg_channel_id}')
+
+async def get_tg_group_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """获取当前 Telegram 群组或频道的 ID"""
+    chat_id = update.effective_chat.id
+    logger.info(f"用户查询群组 ID: {chat_id}")
+    await update.message.reply_text(f'当前 Telegram 群组/频道 ID: {chat_id}')
 
 # 辅助函数
 def is_ticket_channel(channel, config):
@@ -151,18 +187,17 @@ async def periodic_analysis():
                                                 await send_problem_form(problem, settings['tg_channel_id'])
         await asyncio.sleep(7200)
 
-# Telegram 命令
-async def set_discord_guild(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    tg_user_id = str(update.effective_user.id)
-    guild_id = context.args[0]
-    with config_lock:
-        CONFIG.setdefault('telegram_users', {}).setdefault(tg_user_id, {'guild_ids': [], 'tg_channel_id': ''})['guild_ids'].append(guild_id)
-        save_config()
-    await update.message.reply_text(f'已添加监听 Discord 服务器 ID: {guild_id}')
-
+# Telegram Bot 启动函数
 def run_telegram_bot():
-    telegram_bot.add_handler(CommandHandler('set_discord_guild', set_discord_guild))
-    telegram_bot.run_polling()
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    application = Application.builder().token(TELEGRAM_TOKEN).build()
+    application.add_handler(CommandHandler('set_discord_guild', set_discord_guild))
+    application.add_handler(CommandHandler('set_tg_channel', set_tg_channel))
+    application.add_handler(CommandHandler('get_tg_group_id', get_tg_group_id))
+    loop.run_until_complete(application.initialize())
+    loop.run_until_complete(application.start())
+    loop.run_forever()
 
 # 主程序
 if __name__ == "__main__":
