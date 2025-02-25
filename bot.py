@@ -46,7 +46,11 @@ bot_start_time = datetime.datetime.utcnow()
 @bot.event
 async def on_ready():
     logger.info(f'Discord Bot 成功登录为 {bot.user}')
-    await bot.tree.sync()  # 同步斜杠命令到 Discord
+    try:
+        await bot.tree.sync()  # 同步斜杠命令到 Discord
+        logger.info("斜杠命令已成功同步到 Discord")
+    except Exception as e:
+        logger.error(f"斜杠命令同步失败: {e}")
 
 @bot.event
 async def on_message(message):

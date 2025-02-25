@@ -8,9 +8,26 @@ from config_manager import ConfigManager
 from llm_analyzer import analyze_conversation
 from utils import get_conversation, is_ticket_channel
 
-# 设置 telegram 模块的日志级别为 WARNING，减少轮询日志输出
+# 设置日志级别，屏蔽 telegram 和 httpx 的调试信息
 logging.getLogger('telegram').setLevel(logging.WARNING)
+logging.getLogger('httpx').setLevel(logging.WARNING)  # 屏蔽 HTTP 请求日志
 
+# 自定义过滤器，移除轮询相关日志
+class NoPollingFilter(logging.Filter):
+    def filter(self, record):
+        return "Polling" not in record.getMessage() and "HTTP" not in record.getMessage()
+
+# 配置日志，添加过滤器到 StreamHandler
+stream_handler = logging.StreamHandler()
+stream_handler.addFilter(NoPollingFilter())
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('bot.log'),  # 日志记录到文件
+        stream_handler                   # 命令行输出，应用过滤器
+    ]
+)
 logger = logging.getLogger(__name__)
 
 class TelegramBot:
