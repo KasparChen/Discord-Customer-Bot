@@ -1,18 +1,14 @@
 import discord
 from discord.ext import commands
 import asyncio
-import datetime
-import json
-import os
-import logging
 import threading
 from dotenv import load_dotenv
-from telegram.ext import Application, CommandHandler, ContextTypes
-from telegram import Update
-from langchain_community.chat_models import ChatOpenAI
-from langchain.schema import HumanMessage, SystemMessage
-from pydantic import BaseModel
-from langchain.output_parsers import PydanticOutputParser
+import os
+import logging
+from config_manager import ConfigManager
+from utils import get_conversation, is_ticket_channel
+from llm_analyzer import analyze_conversation
+from telegram_bot import TelegramBot
 
 # 设置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -25,23 +21,9 @@ TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 MODEL_ID = os.getenv('MODEL_ID')
 LLM_API_KEY = os.getenv('LLM_API_KEY')
 BASE_URL = 'https://ark.cn-beijing.volces.com/api/v3'
-CONFIG_FILE = 'config.json'
 
-# 加载配置
-if os.path.exists(CONFIG_FILE):
-    with open(CONFIG_FILE, 'r') as f:
-        CONFIG = json.load(f)
-else:
-    CONFIG = {'telegram_users': {}, 'guilds': {}}
-
-# 配置锁
-config_lock = threading.Lock()
-
-# 保存配置
-def save_config():
-    with config_lock:
-        with open(CONFIG_FILE, 'w') as f:
-            json.dump(CONFIG, f, indent=4)
+# 初始化配置管理器
+config_manager = ConfigManager()
 
 # Discord Bot 设置
 intents = discord.Intents.default()
@@ -50,157 +32,51 @@ intents.guilds = True
 intents.guild_messages = True
 discord_bot = commands.Bot(command_prefix='/', intents=intents)
 
-# Telegram Bot 设置
-telegram_bot = Application.builder().token(TELEGRAM_TOKEN).build()
+# Telegram Bot 初始化
+telegram_bot = TelegramBot(TELEGRAM_TOKEN, config_manager, discord_bot)
 
-# 问题表单结构
-class Problem(BaseModel):
-    problem_type: str
-    summary: str
-    source: str
-    user: str
-    timestamp: str
-    details: str
-    original: str
-
-# Discord 事件
 @discord_bot.event
 async def on_ready():
+    # Discord 机器人启动时的事件
     logger.info(f'Discord 机器人已登录为 {discord_bot.user}')
-    discord_bot.loop.create_task(periodic_analysis())
 
 @discord_bot.event
 async def on_message(message):
+    # 处理 Discord 消息
     if message.author == discord_bot.user:
         return
     guild_id = str(message.guild.id)
-    with config_lock:
-        config = CONFIG.get('guilds', {}).get(guild_id, {})
+    config = config_manager.get_guild_config(guild_id)
     if is_ticket_channel(message.channel, config):
-        conversation = await get_conversation(message.channel)
-        problem = analyze_conversation(conversation, message.channel, guild_id)
-        if problem:
-            with config_lock:
-                for tg_user, settings in CONFIG['telegram_users'].items():
-                    if guild_id in settings.get('guild_ids', []):
-                        await send_problem_form(problem, settings['tg_channel_id'])
+        asyncio.create_task(process_message(message, guild_id))
     await discord_bot.process_commands(message)
 
-# Discord 命令
+async def process_message(message, guild_id):
+    # 处理消息并推送问题
+    try:
+        conversation = await get_conversation(message.channel)
+        problem = analyze_conversation(conversation, message.channel, guild_id, config_manager.get_guild_config(guild_id), LLM_API_KEY, BASE_URL, MODEL_ID)
+        if problem:
+            telegram_users = config_manager.config.get('telegram_users', {})
+            for tg_user, settings in telegram_users.items():
+                if guild_id in settings.get('guild_ids', []):
+                    await telegram_bot.send_problem_form(problem, settings['tg_channel_id'])
+    except Exception as e:
+        logger.error(f"处理消息时发生错误: {e}")
+
 @discord_bot.command()
 async def set_ticket_cate(ctx, *, category_ids: str):
-    """设置 Discord 服务器的 Ticket 类别 ID"""
+    # 设置 Ticket 类别 ID
     guild_id = str(ctx.guild.id)
     try:
         ids = [int(id.strip()) for id in category_ids.split(',')]
-        with config_lock:
-            CONFIG.setdefault('guilds', {}).setdefault(guild_id, {})['ticket_category_ids'] = ids
-            save_config()
+        config_manager.set_guild_config(guild_id, 'ticket_category_ids', ids)
         await ctx.send(f'Ticket 类别 ID 已设置为: {ids}')
     except ValueError:
         await ctx.send("输入错误，请提供有效的类别 ID（用逗号分隔）。")
 
-# Telegram 命令处理器
-async def set_discord_guild(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """绑定 Discord 服务器 ID 到 Telegram 用户"""
-    tg_user_id = str(update.effective_user.id)
-    if not context.args:
-        await update.message.reply_text("请提供 Discord 服务器 ID，例如：/set_discord_guild 123456789")
-        return
-    guild_id = context.args[0]
-    with config_lock:
-        CONFIG.setdefault('telegram_users', {}).setdefault(tg_user_id, {'guild_ids': [], 'tg_channel_id': ''})['guild_ids'].append(guild_id)
-        save_config()
-    logger.info(f"用户 {tg_user_id} 添加了 Discord 服务器 ID: {guild_id}")
-    await update.message.reply_text(f'已添加监听 Discord 服务器 ID: {guild_id}')
-
-async def set_tg_channel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """设置 Telegram 推送频道 ID"""
-    tg_user_id = str(update.effective_user.id)
-    if not context.args:
-        await update.message.reply_text("请提供 Telegram 频道 ID，例如：/set_tg_channel -100123456789")
-        return
-    tg_channel_id = context.args[0]
-    with config_lock:
-        CONFIG.setdefault('telegram_users', {}).setdefault(tg_user_id, {'guild_ids': [], 'tg_channel_id': ''})['tg_channel_id'] = tg_channel_id
-        save_config()
-    logger.info(f"用户 {tg_user_id} 设置 Telegram 推送频道为: {tg_channel_id}")
-    await update.message.reply_text(f'已设置 Telegram 推送频道: {tg_channel_id}')
-
-async def get_tg_group_id(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """获取当前 Telegram 群组或频道的 ID"""
-    chat_id = update.effective_chat.id
-    logger.info(f"用户查询群组 ID: {chat_id}")
-    await update.message.reply_text(f'当前 Telegram 群组/频道 ID: {chat_id}')
-
-# 辅助函数
-def is_ticket_channel(channel, config):
-    return channel.category_id in config.get('ticket_category_ids', [])
-
-async def get_conversation(channel):
-    messages = []
-    async for msg in channel.history(limit=50):
-        messages.append({'user': msg.author.name, 'content': msg.content, 'timestamp': msg.created_at.isoformat()})
-    return messages
-
-def analyze_conversation(conversation, channel, guild_id):
-    conversation_text = "\n".join([f"{msg['user']}: {msg['content']}" for msg in conversation])
-    llm = ChatOpenAI(openai_api_key=LLM_API_KEY, base_url=BASE_URL, model=MODEL_ID)
-    parser = PydanticOutputParser(pydantic_object=Problem)
-    system_prompt = "分析对话，提取问题并以 JSON 格式输出，若无问题返回空结果。"
-    user_prompt = f"{parser.get_format_instructions()}\n对话内容：\n{conversation_text}"
-    try:
-        response = llm([SystemMessage(content=system_prompt), HumanMessage(content=user_prompt)])
-        problem = parser.parse(response.content)
-        with config_lock:
-            config = CONFIG.get('guilds', {}).get(guild_id, {})
-        problem.source = 'Ticket' if is_ticket_channel(channel, config) else 'General Chat'
-        return problem.dict()
-    except Exception as e:
-        logger.error(f"LLM 分析出错: {e}")
-        return None
-
-async def send_problem_form(problem, tg_channel_id):
-    if problem and tg_channel_id:
-        form = f"**问题类型**: {problem['problem_type']}\n**简述**: {problem['summary']}\n**来源**: {problem['source']}"
-        await telegram_bot.bot.send_message(chat_id=tg_channel_id, text=form)
-
-async def periodic_analysis():
-    while True:
-        with config_lock:
-            guilds_config = CONFIG.get('guilds', {}).copy()
-        for guild_id, config in guilds_config.items():
-            guild = discord_bot.get_guild(int(guild_id))
-            if guild:
-                for category_id in config.get('monitor_category_ids', []):
-                    category = discord.utils.get(guild.categories, id=category_id)
-                    if category:
-                        for channel in category.text_channels:
-                            since = datetime.datetime.utcnow() - datetime.timedelta(hours=2)
-                            messages = [msg async for msg in channel.history(after=since)]
-                            if messages:
-                                problem = analyze_conversation(messages, channel, guild_id)
-                                if problem:
-                                    with config_lock:
-                                        for tg_user, settings in CONFIG['telegram_users'].items():
-                                            if guild_id in settings.get('guild_ids', []):
-                                                await send_problem_form(problem, settings['tg_channel_id'])
-        await asyncio.sleep(7200)
-
-# Telegram Bot 启动函数
-def run_telegram_bot():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    application = Application.builder().token(TELEGRAM_TOKEN).build()
-    application.add_handler(CommandHandler('set_discord_guild', set_discord_guild))
-    application.add_handler(CommandHandler('set_tg_channel', set_tg_channel))
-    application.add_handler(CommandHandler('get_tg_group_id', get_tg_group_id))
-    loop.run_until_complete(application.initialize())
-    loop.run_until_complete(application.start())
-    loop.run_forever()
-
 # 主程序
 if __name__ == "__main__":
-    telegram_thread = threading.Thread(target=run_telegram_bot, daemon=True)
+    telegram_thread = threading.Thread(target=telegram_bot.run, daemon=True)
     telegram_thread.start()
     discord_bot.run(DISCORD_TOKEN)
