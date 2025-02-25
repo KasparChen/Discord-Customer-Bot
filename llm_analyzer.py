@@ -3,7 +3,7 @@ from langchain.schema import HumanMessage, SystemMessage
 from langchain.output_parsers import PydanticOutputParser
 from models import Problem
 import logging
-from utils import is_ticket_channel  # 导入工具函数
+from utils import is_ticket_channel
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,10 @@ def analyze_conversation(conversation, channel, guild_id, config, llm_api_key, b
         
         # 设置问题来源
         problem.source = 'Ticket' if is_ticket_channel(channel, config) else 'General Chat'
+        logger.info(f"对话分析完成，发现问题: {problem.problem_type}")
+        print(f"对话分析完成，发现问题: {problem.problem_type}")
         return problem.dict()
     except Exception as e:
         logger.error(f"LLM 分析出错: {e}")
+        print(f"LLM 分析出错: {e}")
         return None

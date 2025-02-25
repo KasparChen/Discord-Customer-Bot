@@ -16,6 +16,8 @@ class TelegramBot:
         self.application = Application.builder().token(token).build()
         self.config_manager = config_manager
         self.discord_bot = discord_bot
+        logger.info("Telegram Bot 正在初始化...")
+        print("Telegram Bot 正在初始化...")
 
     async def set_discord_guild(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         # 设置要监听的 Discord 服务器
@@ -27,6 +29,7 @@ class TelegramBot:
         current_guilds = self.config_manager.get_telegram_user_config(tg_user_id).get('guild_ids', [])
         self.config_manager.set_telegram_user_config(tg_user_id, 'guild_ids', current_guilds + [guild_id])
         logger.info(f"用户 {tg_user_id} 添加了 Discord 服务器 ID: {guild_id}")
+        print(f"用户 {tg_user_id} 添加了 Discord 服务器 ID: {guild_id}")
         await update.message.reply_text(f'已添加监听 Discord 服务器 ID: {guild_id}')
 
     async def set_tg_channel(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -38,12 +41,14 @@ class TelegramBot:
         tg_channel_id = context.args[0]
         self.config_manager.set_telegram_user_config(tg_user_id, 'tg_channel_id', tg_channel_id)
         logger.info(f"用户 {tg_user_id} 设置 Telegram 推送频道为: {tg_channel_id}")
+        print(f"用户 {tg_user_id} 设置 Telegram 推送频道为: {tg_channel_id}")
         await update.message.reply_text(f'已设置 Telegram 推送频道: {tg_channel_id}')
 
     async def get_tg_group_id(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         # 获取当前 Telegram 群组/频道的 ID
         chat_id = update.effective_chat.id
-        logger.info(f"用户查询群组 ID: {chat_id}")
+        logger.info(f"Telegram 用户查询群组 ID: {chat_id}")
+        print(f"Telegram 用户查询群组 ID: {chat_id}")
         await update.message.reply_text(f'当前 Telegram 群组/频道 ID: {chat_id}')
 
     async def send_problem_form(self, problem, tg_channel_id):
@@ -51,9 +56,13 @@ class TelegramBot:
         if problem and tg_channel_id:
             form = f"**问题类型**: {problem['problem_type']}\n**简述**: {problem['summary']}\n**来源**: {problem['source']}"
             await self.application.bot.send_message(chat_id=tg_channel_id, text=form)
+            logger.info(f"Telegram Bot 发送问题到 {tg_channel_id}: {problem['problem_type']}")
+            print(f"Telegram Bot 发送问题到 {tg_channel_id}: {problem['problem_type']}")
 
     async def periodic_analysis(self):
         # 定时分析 Discord 对话
+        logger.info("Telegram Bot 开始定时分析 Discord 对话...")
+        print("Telegram Bot 开始定时分析 Discord 对话...")
         while True:
             guilds_config = self.config_manager.config.get('guilds', {})
             telegram_users = self.config_manager.config.get('telegram_users', {})
@@ -71,11 +80,15 @@ class TelegramBot:
                                     if problem:
                                         for tg_user, settings in telegram_users.items():
                                             if guild_id in settings.get('guild_ids', []):
+                                                logger.info(f"Discord Bot 采集并发送问题 {{DC server ID: {guild_id} | 类型: {problem['problem_type']} | TG Channel ID: {settings['tg_channel_id']}}}")
+                                                print(f"Discord Bot 采集并发送问题 {{DC server ID: {guild_id} | 类型: {problem['problem_type']} | TG Channel ID: {settings['tg_channel_id']}}}")
                                                 await self.send_problem_form(problem, settings['tg_channel_id'])
             await asyncio.sleep(7200)  # 每 2 小时检查一次
 
     def run(self):
         # 运行 Telegram 机器人
+        logger.info("Telegram Bot 正在启动...")
+        print("Telegram Bot 正在启动...")
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         self.application.add_handler(CommandHandler('set_discord_guild', self.set_discord_guild))
@@ -84,4 +97,6 @@ class TelegramBot:
         loop.create_task(self.periodic_analysis())
         loop.run_until_complete(self.application.initialize())
         loop.run_until_complete(self.application.start())
+        logger.info("Telegram Bot 已成功启动")
+        print("Telegram Bot 已成功启动")
         loop.run_forever()
