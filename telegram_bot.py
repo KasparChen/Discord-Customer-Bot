@@ -113,9 +113,9 @@ class TelegramBot:
                                 await self.send_general_summary(summary, tg_channel_id)
             await asyncio.sleep(7200)  # 每2小时检查一次
 
-    async def get_tg_group_id(self, update: Update, context):
+    async def get_group_id(self, update: Update, context):
         """获取当前 Telegram 群组或频道的 ID
-        命令: /get_tg_group_id
+        命令: /get_group_id
         """
         chat_id = update.effective_chat.id
         await update.message.reply_text(f'当前 Telegram 群组/频道 ID: {chat_id}')
