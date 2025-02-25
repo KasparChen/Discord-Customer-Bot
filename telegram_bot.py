@@ -8,6 +8,9 @@ from config_manager import ConfigManager
 from llm_analyzer import analyze_conversation
 from utils import get_conversation, is_ticket_channel
 
+# 设置 telegram 模块的日志级别为 WARNING，减少轮询日志输出
+logging.getLogger('telegram').setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 class TelegramBot:
@@ -90,7 +93,7 @@ class TelegramBot:
         await self.application.initialize()
         await self.application.start()
         logger.info("Telegram Bot 已成功启动")
-        # 运行轮询
-        await self.application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+        # 运行轮询，忽略启动前的更新
+        await self.application.updater.start_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
         # 保持事件循环运行
         await asyncio.Event().wait()
