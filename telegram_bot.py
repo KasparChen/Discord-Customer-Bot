@@ -57,12 +57,18 @@ class TelegramBot:
             await asyncio.sleep(7200)  # 每 2 小时检查一次
 
     # 运行 Telegram Bot
-    def run(self):
+    async def run(self):  # 改为异步方法
         logger.info("Telegram Bot 正在启动...")
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.create_task(self.periodic_analysis())  # 启动定时分析任务
-        loop.run_until_complete(self.application.initialize())
-        loop.run_until_complete(self.application.start())
+        # 添加命令处理器
+        self.application.add_handler(CommandHandler('set_discord_guild', self.set_discord_guild))
+        self.application.add_handler(CommandHandler('set_tg_channel', self.set_tg_channel))
+        self.application.add_handler(CommandHandler('get_tg_group_id', self.get_tg_group_id))
+        # 启动定时分析任务
+        asyncio.create_task(self.periodic_analysis())
+        # 初始化并启动 Telegram Bot
+        await self.application.initialize()
+        await self.application.start()
+        await self.application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
         logger.info("Telegram Bot 已成功启动")
-        loop.run_forever()
+        # 保持运行，直到外部事件循环停止
+        await asyncio.Event().wait()
