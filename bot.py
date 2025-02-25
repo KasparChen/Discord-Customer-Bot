@@ -40,8 +40,8 @@ intents.guilds = True
 intents.guild_messages = True
 bot = commands.Bot(command_prefix='/', intents=intents)
 
-# 记录 bot 启动时间
-bot_start_time = datetime.datetime.utcnow()
+# 记录 bot 启动时间，带有 UTC 时区
+bot_start_time = datetime.datetime.now(datetime.timezone.utc)
 
 @bot.event
 async def on_ready():
