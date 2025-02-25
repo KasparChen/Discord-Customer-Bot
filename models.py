@@ -1,13 +1,23 @@
 from pydantic import BaseModel
 
-# 定义问题反馈的数据模型
 class Problem(BaseModel):
-    problem_type: str    # 问题类型，例如 "bug" 或 "question"
-    summary: str         # 问题简述
-    source: str          # 问题来源，例如 "Ticket" 或 "General Chat"
-    user: str            # 提出问题的用户
-    timestamp: str       # 问题的时间戳
-    details: str         # 问题的详细描述
-    original: str        # 原始对话内容
-    is_valid: bool       # 是否有效
-    id: int              # 唯一 ID
+    """
+    问题反馈模型，定义问题反馈的字段和类型。
+    """
+    problem_type: str  # 问题类型（如功能建议、Bug 报告等）
+    summary: str  # 问题简述
+    source: str  # 来源（Ticket 或 General Chat）
+    user: str  # 提交用户
+    timestamp: str  # 时间戳
+    details: str  # 详细描述
+    original: str  # 原始对话内容
+    is_valid: bool  # 是否有效
+    id: int  # 问题 ID
+
+class GeneralSummary(BaseModel):
+    """
+    对话总结模型，定义总结报告的字段和类型。
+    """
+    emotion: str  # 对话情绪（积极、消极、中立等）
+    discussion_summary: str  # 讨论概述
+    key_events: str  # 重点关注事件

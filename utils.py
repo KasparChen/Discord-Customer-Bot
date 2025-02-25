@@ -1,16 +1,34 @@
 import discord
 
-# 获取频道最近 50 条消息的对话内容
-async def get_conversation(channel):
+async def get_conversation(channel, limit=50):
+    """
+    获取指定频道的对话内容。
+    
+    参数:
+        channel (discord.Channel): Discord 频道对象
+        limit (int): 最大消息条数，默认为50
+    
+    返回:
+        list: 对话内容列表，包含用户、消息内容和时间戳
+    """
     messages = []
-    async for msg in channel.history(limit=50):  # 获取最近 50 条消息
+    async for msg in channel.history(limit=limit):
         messages.append({
-            'user': msg.author.name,      # 用户名
-            'content': msg.content,       # 消息内容
-            'timestamp': msg.created_at.isoformat()  # 时间戳
+            'user': msg.author.name,
+            'content': msg.content,
+            'timestamp': msg.created_at.isoformat()
         })
     return messages
 
-# 判断是否为 Ticket 频道
 def is_ticket_channel(channel, config):
-    return channel.category_id in config.get('ticket_category_ids', [])  # 检查频道类别 ID
+    """
+    判断指定频道是否为 Ticket 频道。
+    
+    参数:
+        channel (discord.Channel): Discord 频道对象
+        config (dict): 服务器配置
+    
+    返回:
+        bool: 是否为 Ticket 频道
+    """
+    return channel.category_id in config.get('ticket_category_ids', [])
