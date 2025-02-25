@@ -127,9 +127,15 @@ async def check_ticket_cate(interaction: discord.Interaction):
     config = config_manager.get_guild_config(guild_id)
     ticket_cate_ids = config.get('ticket_category_ids', [])  # 获取当前类别 ID
     if ticket_cate_ids:
-        await interaction.response.send_message(f'当前 Ticket 类别 ID: {ticket_cate_ids}', ephemeral=True)
+        guild = interaction.guild
+        categories = [guild.get_channel(cid) for cid in ticket_cate_ids if guild.get_channel(cid) and guild.get_channel(cid).type == discord.ChannelType.category]
+        if categories:
+            response = "当前 Ticket 类别:\n" + "\n".join([f"{cate.name} (ID: {cate.id})" for cate in categories])
+        else:
+            response = "当前 Ticket 类别 ID 未对应任何类别"
     else:
-        await interaction.response.send_message('尚未设置 Ticket 类别 ID', ephemeral=True)
+        response = "尚未设置 Ticket 类别"
+    await interaction.response.send_message(response, ephemeral=True)
 
 # 命令：设置 Telegram 推送频道 ID
 @bot.tree.command(name="set_tg_channel", description="设置 Telegram 推送频道 ID")
@@ -149,8 +155,12 @@ async def check_tg_channel(interaction: discord.Interaction):
     guild_id = str(interaction.guild.id)
     config = config_manager.get_guild_config(guild_id)
     tg_channel_id = config.get('tg_channel_id', '未设置')  # 获取当前 Telegram 频道 ID
-    await interaction.response.send_message(f'当前 Telegram 推送频道: {tg_channel_id}', ephemeral=True)
-
+    if tg_channel_id != '未设置':
+        response = f"当前 Telegram 推送频道 ID: {tg_channel_id}\n请自行确认ID是否正确。"
+    else:
+        response = "尚未设置 Telegram 推送频道"
+    await interaction.response.send_message(response, ephemeral=True)
+    
 # 命令：设置监控频道（General Chat）
 @bot.tree.command(name="set_monitor_channels", description="设置监控的 General Chat 频道（最多5个）")
 @app_commands.describe(channels="频道 ID（用逗号分隔）")
@@ -186,9 +196,15 @@ async def check_monitor_channels(interaction: discord.Interaction):
     config = config_manager.get_guild_config(guild_id)
     monitor_channels = config.get('monitor_channels', [])
     if monitor_channels:
-        await interaction.response.send_message(f'当前监控频道: {monitor_channels}', ephemeral=True)
+        guild = interaction.guild
+        channels = [guild.get_channel(cid) for cid in monitor_channels if guild.get_channel(cid)]
+        if channels:
+            response = "当前监控频道:\n" + "\n".join([f"{ch.name} (ID: {ch.id})" for ch in channels])
+        else:
+            response = "当前监控频道 ID 未对应任何频道"
     else:
-        await interaction.response.send_message('尚未设置监控频道', ephemeral=True)
+        response = "尚未设置监控频道"
+    await interaction.response.send_message(response, ephemeral=True)
 
 # 命令：设置监控参数
 @bot.tree.command(name="set_monitor_params", description="设置监控周期和最大消息条数")
