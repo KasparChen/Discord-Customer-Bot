@@ -52,37 +52,45 @@ class TelegramBot:
         await update.message.reply_text(f'当前 Telegram 群组/频道 ID: {chat_id}')
 
     async def send_problem_form(self, problem, tg_channel_id):
-        # 发送问题到 Telegram 频道
+        # 发送问题到指定的 Telegram 频道
         if problem and tg_channel_id:
             form = f"**问题类型**: {problem['problem_type']}\n**简述**: {problem['summary']}\n**来源**: {problem['source']}"
-            await self.application.bot.send_message(chat_id=tg_channel_id, text=form)
-            logger.info(f"Telegram Bot 发送问题到 {tg_channel_id}: {problem['problem_type']}")
-            print(f"Telegram Bot 发送问题到 {tg_channel_id}: {problem['problem_type']}")
+            try:
+                await self.application.bot.send_message(chat_id=tg_channel_id, text=form)
+                logger.info(f"Telegram Bot 发送问题到 {tg_channel_id}: {problem['problem_type']}")
+                print(f"Telegram Bot 发送问题到 {tg_channel_id}: {problem['problem_type']}")
+            except Exception as e:
+                logger.error(f"发送问题到 {tg_channel_id} 失败: {e}")
+                print(f"发送问题到 {tg_channel_id} 失败: {e}")
 
     async def periodic_analysis(self):
-        # 定时分析 Discord 对话
+        # 定时分析 Discord 对话并推送问题
         logger.info("Telegram Bot 开始定时分析 Discord 对话...")
         print("Telegram Bot 开始定时分析 Discord 对话...")
         while True:
-            guilds_config = self.config_manager.config.get('guilds', {})
-            telegram_users = self.config_manager.config.get('telegram_users', {})
-            for guild_id, config in guilds_config.items():
-                guild = self.discord_bot.get_guild(int(guild_id))
-                if guild:
-                    for category_id in config.get('monitor_category_ids', []):
-                        category = discord.utils.get(guild.categories, id=category_id)
-                        if category:
-                            for channel in category.text_channels:
-                                since = datetime.datetime.utcnow() - datetime.timedelta(hours=2)
-                                messages = [msg async for msg in channel.history(after=since)]
-                                if messages:
-                                    problem = analyze_conversation(messages, channel, guild_id, config, "your_llm_api_key", "https://ark.cn-beijing.volces.com/api/v3", "your_model_id")
-                                    if problem:
-                                        for tg_user, settings in telegram_users.items():
-                                            if guild_id in settings.get('guild_ids', []):
-                                                logger.info(f"Discord Bot 采集并发送问题 {{DC server ID: {guild_id} | 类型: {problem['problem_type']} | TG Channel ID: {settings['tg_channel_id']}}}")
-                                                print(f"Discord Bot 采集并发送问题 {{DC server ID: {guild_id} | 类型: {problem['problem_type']} | TG Channel ID: {settings['tg_channel_id']}}}")
-                                                await self.send_problem_form(problem, settings['tg_channel_id'])
+            try:
+                guilds_config = self.config_manager.config.get('guilds', {})
+                telegram_users = self.config_manager.config.get('telegram_users', {})
+                for guild_id, config in guilds_config.items():
+                    guild = self.discord_bot.get_guild(int(guild_id))
+                    if guild:
+                        for category_id in config.get('monitor_category_ids', []):
+                            category = discord.utils.get(guild.categories, id=category_id)
+                            if category:
+                                for channel in category.text_channels:
+                                    since = datetime.datetime.utcnow() - datetime.timedelta(hours=2)
+                                    messages = [msg async for msg in channel.history(after=since)]
+                                    if messages:
+                                        problem = analyze_conversation(messages, channel, guild_id, config, "your_llm_api_key", "https://ark.cn-beijing.volces.com/api/v3", "your_model_id")
+                                        if problem:
+                                            for tg_user, settings in telegram_users.items():
+                                                if guild_id in settings.get('guild_ids', []):
+                                                    logger.info(f"Telegram Bot 定时任务采集并发送问题 {{DC server ID: {guild_id} | 类型: {problem['problem_type']} | TG Channel ID: {settings['tg_channel_id']}}}")
+                                                    print(f"Telegram Bot 定时任务采集并发送问题 {{DC server ID: {guild_id} | 类型: {problem['problem_type']} | TG Channel ID: {settings['tg_channel_id']}}}")
+                                                    await self.send_problem_form(problem, settings['tg_channel_id'])
+            except Exception as e:
+                logger.error(f"定时分析任务发生错误: {e}")
+                print(f"定时分析任务发生错误: {e}")
             await asyncio.sleep(7200)  # 每 2 小时检查一次
 
     def run(self):
@@ -91,12 +99,16 @@ class TelegramBot:
         print("Telegram Bot 正在启动...")
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
+        # 注册指令处理函数
         self.application.add_handler(CommandHandler('set_discord_guild', self.set_discord_guild))
         self.application.add_handler(CommandHandler('set_tg_channel', self.set_tg_channel))
         self.application.add_handler(CommandHandler('get_tg_group_id', self.get_tg_group_id))
+        # 启动定时分析任务
         loop.create_task(self.periodic_analysis())
+        # 初始化并启动 bot
         loop.run_until_complete(self.application.initialize())
         loop.run_until_complete(self.application.start())
         logger.info("Telegram Bot 已成功启动")
         print("Telegram Bot 已成功启动")
-        loop.run_forever()
+        # 运行事件循环，处理消息和指令
+        self.application.run_polling(allowed_updates=Update.ALL_TYPES)

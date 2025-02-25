@@ -37,7 +37,7 @@ telegram_bot = TelegramBot(TELEGRAM_TOKEN, config_manager, discord_bot)
 
 @discord_bot.event
 async def on_ready():
-    # Discord 机器人启动时的事件
+    # 当 Discord bot 成功登录时触发
     logger.info(f'Discord Bot 成功登录为 {discord_bot.user}')
     print(f'Discord Bot 成功登录为 {discord_bot.user}')
 
@@ -55,7 +55,7 @@ async def on_message(message):
     await discord_bot.process_commands(message)
 
 async def process_message(message, guild_id):
-    # 处理消息并推送问题
+    # 处理消息并推送问题到 Telegram
     try:
         conversation = await get_conversation(message.channel)
         problem = analyze_conversation(conversation, message.channel, guild_id, config_manager.get_guild_config(guild_id), LLM_API_KEY, BASE_URL, MODEL_ID)
@@ -72,7 +72,7 @@ async def process_message(message, guild_id):
 
 @discord_bot.command()
 async def set_ticket_cate(ctx, *, category_ids: str):
-    # 设置 Ticket 类别 ID
+    # 设置 Discord 的 Ticket 类别 ID
     guild_id = str(ctx.guild.id)
     try:
         ids = [int(id.strip()) for id in category_ids.split(',')]
