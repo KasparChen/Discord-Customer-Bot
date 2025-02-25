@@ -16,7 +16,6 @@ from langchain.schema import HumanMessage, SystemMessage
 from pydantic import BaseModel
 from langchain.output_parsers import PydanticOutputParser
 import aiohttp
-from discord import ClientException
 
 # 设置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -88,6 +87,8 @@ class Problem(BaseModel):
 async def on_ready():
     logger.info(f'Discord 机器人已登录为 {discord_bot.user}')
     discord_bot.loop.create_task(periodic_analysis())
+    # 启动 Telegram Bot
+    discord_bot.loop.create_task(start_telegram_bot())
 
 # Discord 事件：新频道创建
 @discord_bot.event
@@ -256,6 +257,17 @@ async def periodic_analysis():
                                         await send_problem_form(problem, settings['tg_channel_id'])
         await asyncio.sleep(7200)  # 每 2 小时运行一次
 
+# Telegram Bot 启动函数
+async def start_telegram_bot():
+    application = Application.builder().token(TELEGRAM_TOKEN).build()
+    application.add_handler(CommandHandler('set_discord_guild', set_discord_guild))
+    application.add_handler(CommandHandler('set_tg_channel', set_tg_channel))
+    application.add_handler(CommandHandler('get_tg_group_id', get_tg_group_id))
+    await application.initialize()
+    await application.start()
+    logger.info("Telegram Bot 已启动")
+    await application.run_polling()
+
 # Telegram 命令：设置监听的 Discord 服务器 ID
 async def set_discord_guild(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     logger.info("Received /set_discord_guild command")
@@ -284,34 +296,10 @@ async def get_tg_group_id(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     chat_id = update.effective_chat.id
     await update.message.reply_text(f'当前 Telegram 群组/频道 ID: {chat_id}')
 
-# 主函数：运行 Discord 和 Telegram
-async def main(loop):
-    # 配置 Telegram Bot
-    application = Application.builder().token(TELEGRAM_TOKEN).build()
-    application.add_handler(CommandHandler('set_discord_guild', set_discord_guild))
-    application.add_handler(CommandHandler('set_tg_channel', set_tg_channel))
-    application.add_handler(CommandHandler('get_tg_group_id', get_tg_group_id))
-    await application.initialize()
-    await application.start()
-    logger.info("Telegram Bot 已启动")
-
-    # 创建自定义 aiohttp 会话
-    session = aiohttp.ClientSession()
-    discord_bot.http._HTTPClient__session = session
-
-    # 启动 Discord 和 Telegram
-    discord_task = loop.create_task(discord_bot.start(DISCORD_TOKEN))
-    telegram_task = loop.create_task(application.run_polling())
-
-    # 等待任务完成
-    await asyncio.gather(discord_task, telegram_task)
-
+# 主函数：仅运行 Discord，Telegram 在 on_ready 中启动
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
     try:
-        loop.run_until_complete(main(loop))
+        discord_bot.run(DISCORD_TOKEN)
     except Exception as e:
         logger.error(f"主程序发生错误: {e}")
         traceback.print_exc()
-    finally:
-        loop.close()
