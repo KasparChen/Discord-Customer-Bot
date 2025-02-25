@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 
-# 定义问题的数据模型，用于结构化 LLM 分析结果
+# 定义问题反馈的数据模型
 class Problem(BaseModel):
     problem_type: str    # 问题类型，例如 "bug" 或 "question"
     summary: str         # 问题简述
@@ -9,3 +9,5 @@ class Problem(BaseModel):
     timestamp: str       # 问题的时间戳
     details: str         # 问题的详细描述
     original: str        # 原始对话内容
+    is_valid: bool       # 是否有效
+    id: int              # 唯一 ID
