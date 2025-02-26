@@ -8,48 +8,33 @@ from config_manager import ConfigManager
 from llm_analyzer import analyze_general_conversation
 from utils import get_conversation
 
-# 设置日志记录器
 logger = logging.getLogger(__name__)
 
-# 自定义过滤器：屏蔽 Telegram 的 getUpdates 日志，避免每10秒记录一次
+# 自定义过滤器：屏蔽非错误级别的 getUpdates 日志，避免日志污染
 class NoGetUpdatesFilter(logging.Filter):
     def filter(self, record):
-        """仅允许记录 getUpdates 的异常情况"""
         msg = record.getMessage()
-        # 如果日志中包含 "getUpdates" 且不是错误日志，则过滤掉
         if "getUpdates" in msg and record.levelno < logging.ERROR:
             return False
         return True
 
-# 将过滤器应用到所有日志处理器
 for handler in logging.getLogger().handlers:
     handler.addFilter(NoGetUpdatesFilter())
 
 class TelegramBot:
     def __init__(self, token, config_manager, discord_bot, llm_api_key, base_url, model_id):
-        """初始化 Telegram Bot
-        参数:
-            token: Telegram Bot 的 Token
-            config_manager: 配置管理器实例，用于读取和管理配置
-            discord_bot: Discord Bot 实例，用于跨平台交互
-            llm_api_key: LLM 的 API Key
-            base_url: LLM 的基础 URL
-            model_id: LLM 模型 ID
-        """
-        self.application = Application.builder().token(token).build()
-        self.config_manager = config_manager
-        self.discord_bot = discord_bot
-        self.llm_api_key = llm_api_key
-        self.base_url = base_url
-        self.model_id = model_id
+        """初始化 Telegram Bot"""
+        self.application = Application.builder().token(token).build()  # 创建 Telegram Application 实例
+        self.config_manager = config_manager  # 配置管理器实例
+        self.discord_bot = discord_bot  # Discord Bot 实例，用于跨平台交互
+        self.llm_api_key = llm_api_key  # LLM API 密钥
+        self.base_url = base_url  # LLM API 基础 URL
+        self.model_id = model_id  # LLM 模型 ID
+        self.heartbeat_channels = set()  # 存储启用了心跳日志接收的 Telegram 频道 ID
         logger.info("Telegram Bot 初始化完成")
 
     async def send_problem_form(self, problem, tg_channel_id):
-        """将问题反馈以指定格式发送到 Telegram 频道
-        参数:
-            problem: 问题字典，包含 id, problem_type, summary, source, timestamp, details 等字段
-            tg_channel_id: 目标 Telegram 频道 ID
-        """
+        """将问题反馈发送到指定的 Telegram 频道"""
         form = (
             f"--- Issue Summary #{problem['id']} ---\n"
             f"问题类型: {problem['problem_type']}\n"
@@ -60,17 +45,13 @@ class TelegramBot:
             f"-----------------------------"
         )
         try:
-            await self.application.bot.send_message(chat_id=tg_channel_id, text=form)
+            await self.application.bot.send_message(chat_id=tg_channel_id, text=form)  # 发送消息
             logger.info(f"问题已发送到 {tg_channel_id}: {problem['problem_type']}")
         except Exception as e:
             logger.error(f"发送问题到 {tg_channel_id} 失败: {e}")
 
     async def send_general_summary(self, summary, tg_channel_id):
-        """将 General Chat 的总结发送到 Telegram 频道
-        参数:
-            summary: 总结字典，包含 publish_time, monitor_period, monitored_messages 等字段
-            tg_channel_id: 目标 Telegram 频道 ID
-        """
+        """将 General Chat 总结发送到指定的 Telegram 频道"""
         form = (
             f"===== Chat Summary =====\n"
             f"发布时间: {summary['publish_time']}\n"
@@ -83,55 +64,51 @@ class TelegramBot:
             f"========================="
         )
         try:
-            await self.application.bot.send_message(chat_id=tg_channel_id, text=form)
+            await self.application.bot.send_message(chat_id=tg_channel_id, text=form)  # 发送消息
             logger.info(f"General Chat 总结已发送到 {tg_channel_id}")
         except Exception as e:
             logger.error(f"发送总结到 {tg_channel_id} 失败: {e}")
 
     async def periodic_general_analysis(self):
-        """定期分析所有配置的 General Chat 频道，并发送总结"""
+        """定期分析 Discord General Chat 频道并发送总结到 Telegram"""
         while True:
-            guilds_config = self.config_manager.config.get('guilds', {})
+            guilds_config = self.config_manager.config.get('guilds', {})  # 获取所有服务器配置
             for guild_id, config in guilds_config.items():
-                guild = self.discord_bot.get_guild(int(guild_id))
+                guild = self.discord_bot.get_guild(int(guild_id))  # 获取 Discord 服务器对象
                 if guild:
-                    monitor_channels = config.get('monitor_channels', [])
+                    monitor_channels = config.get('monitor_channels', [])  # 获取监控频道列表
                     for channel_id in monitor_channels:
                         channel = guild.get_channel(channel_id)
                         if channel:
-                            period_hours = config.get('monitor_period', 3)
-                            max_messages = config.get('monitor_max_messages', 100)
-                            since = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=period_hours)
-                            messages = [msg async for msg in channel.history(limit=None, after=since)]
+                            period_hours = config.get('monitor_period', 3)  # 默认监控周期为3小时
+                            max_messages = config.get('monitor_max_messages', 100)  # 默认最大消息数为100
+                            since = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=period_hours)  # 计算时间范围
+                            messages = [msg async for msg in channel.history(limit=None, after=since)]  # 获取消息
                             total_messages = len(messages)
-                            monitored_messages = min(total_messages, max_messages)
-                            conversation = await get_conversation(channel, limit=monitored_messages)
-                            summary = analyze_general_conversation(
+                            monitored_messages = min(total_messages, max_messages)  # 限制分析的消息数量
+                            conversation = await get_conversation(channel, limit=monitored_messages)  # 获取对话内容
+                            summary = analyze_general_conversation(  # 使用 LLM 分析
                                 conversation, channel, guild_id, config,
                                 self.llm_api_key, self.base_url, self.model_id
                             )
+                            # 添加额外信息到总结
                             summary['publish_time'] = datetime.datetime.now().isoformat()
                             summary['monitor_period'] = f"{period_hours} 小时"
                             summary['monitored_messages'] = monitored_messages
                             summary['total_messages'] = total_messages
                             tg_channel_id = config.get('tg_channel_id')
                             if tg_channel_id:
-                                await self.send_general_summary(summary, tg_channel_id)
-            await asyncio.sleep(7200)  # 每2小时检查一次
+                                await self.send_general_summary(summary, tg_channel_id)  # 发送总结
+            await asyncio.sleep(7200)  # 每2小时（7200秒）执行一次
 
     async def get_group_id(self, update: Update, context):
-        """获取当前 Telegram 群组或频道的 ID
-        命令: /get_group_id
-        """
+        """Telegram 命令：获取当前群组或频道的 ID"""
         chat_id = update.effective_chat.id
         await update.message.reply_text(f'当前 Telegram 群组/频道 ID: {chat_id}')
         logger.info(f"用户 {update.effective_user.id} 查询了 Telegram 群组/频道 ID: {chat_id}")
 
     async def current_binding(self, update: Update, context):
-        """查看与当前 Telegram 频道绑定的 Discord 服务器信息
-        命令: /current_binding
-        功能: 返回绑定到当前 Telegram 频道的 Discord 服务器数量、名称和 ID
-        """
+        """Telegram 命令：查看与当前 Telegram 频道绑定的 Discord 服务器"""
         current_tg_channel_id = str(update.effective_chat.id)
         bound_servers = []
         guilds_config = self.config_manager.config.get('guilds', {})
@@ -153,18 +130,56 @@ class TelegramBot:
         await update.message.reply_text(response)
         logger.info(f"用户 {update.effective_user.id} 查询了当前绑定的 Discord 服务器")
 
+    async def heartbeat_on(self, update: Update, context):
+        """Telegram 命令：开启心跳日志接收"""
+        chat_id = update.effective_chat.id
+        if chat_id not in self.heartbeat_channels:
+            self.heartbeat_channels.add(chat_id)
+            await update.message.reply_text("心跳日志接收已开启")
+            logger.info(f"频道 {chat_id} 开启了心跳日志接收")
+        else:
+            await update.message.reply_text("心跳日志接收已处于开启状态")
+
+    async def heartbeat_off(self, update: Update, context):
+        """Telegram 命令：关闭心跳日志接收"""
+        chat_id = update.effective_chat.id
+        if chat_id in self.heartbeat_channels:
+            self.heartbeat_channels.remove(chat_id)
+            await update.message.reply_text("心跳日志接收已关闭")
+            logger.info(f"频道 {chat_id} 关闭了心跳日志接收")
+        else:
+            await update.message.reply_text("心跳日志接收未开启")
+
+    async def send_heartbeat_logs(self):
+        """定期发送心跳日志到启用的 Telegram 频道"""
+        while True:
+            await asyncio.sleep(60)  # 每60秒检查一次
+            if self.heartbeat_channels:
+                with open('heartbeat.log', 'r') as f:
+                    lines = f.readlines()
+                    if lines:
+                        latest_log = lines[-1].strip()  # 获取最新一行日志
+                        for chat_id in self.heartbeat_channels:
+                            try:
+                                await self.application.bot.send_message(chat_id=chat_id, text=f"心跳日志: {latest_log}")
+                            except Exception as e:
+                                logger.error(f"发送心跳日志到 {chat_id} 失败: {e}")
+
     async def run(self):
         """启动 Telegram Bot 的主循环"""
         logger.info("Telegram Bot 启动中...")
         # 注册命令处理器
         self.application.add_handler(CommandHandler('get_group_id', self.get_group_id))
         self.application.add_handler(CommandHandler('current_binding', self.current_binding))
-        # 启动定期分析任务
-        asyncio.create_task(self.periodic_general_analysis())
+        self.application.add_handler(CommandHandler('heartbeat_on', self.heartbeat_on))
+        self.application.add_handler(CommandHandler('heartbeat_off', self.heartbeat_off))
+        # 启动定期任务
+        asyncio.create_task(self.periodic_general_analysis())  # 启动 General Chat 分析任务
+        asyncio.create_task(self.send_heartbeat_logs())  # 启动心跳日志发送任务
         # 初始化并运行 Telegram Bot
         await self.application.initialize()
         await self.application.start()
-        # 开始轮询 Telegram 更新（默认每10秒一次 getUpdates）
+        # 开始轮询 Telegram 更新
         await self.application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
         logger.info("Telegram Bot 已启动")
         await asyncio.Event().wait()  # 保持运行
