@@ -11,11 +11,17 @@ from utils import get_conversation
 # 设置日志记录器
 logger = logging.getLogger(__name__)
 
-# 自定义过滤器：屏蔽 Telegram 的 getUpdates 日志，避免频繁记录
+# 自定义过滤器：屏蔽 Telegram 的 getUpdates 日志，避免每10秒记录一次
 class NoGetUpdatesFilter(logging.Filter):
     def filter(self, record):
-        return "getUpdates" not in record.getMessage()
+        """仅允许记录 getUpdates 的异常情况"""
+        msg = record.getMessage()
+        # 如果日志中包含 "getUpdates" 且不是错误日志，则过滤掉
+        if "getUpdates" in msg and record.levelno < logging.ERROR:
+            return False
+        return True
 
+# 将过滤器应用到所有日志处理器
 for handler in logging.getLogger().handlers:
     handler.addFilter(NoGetUpdatesFilter())
 
@@ -158,7 +164,7 @@ class TelegramBot:
         # 初始化并运行 Telegram Bot
         await self.application.initialize()
         await self.application.start()
-        # 开始轮询 Telegram 更新
+        # 开始轮询 Telegram 更新（默认每10秒一次 getUpdates）
         await self.application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
         logger.info("Telegram Bot 已启动")
         await asyncio.Event().wait()  # 保持运行
