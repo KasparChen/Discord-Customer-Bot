@@ -160,3 +160,16 @@ class ConfigManager:
                 'base_url': llm_config['base_url']
             }
         return None  # 无自定义配置时返回 None
+    
+    # 新增方法：获取 warp_msg 允许的角色
+    def get_warp_msg_allowed_roles(self, guild_id):
+        """
+        获取指定服务器允许使用 warp_msg 的角色 ID 列表
+        
+        Args:
+            guild_id (str): Discord 服务器 ID
+        
+        Returns:
+            list: 允许的角色 ID 列表，若无则返回空列表
+        """
+        return self.get_guild_config(guild_id).get('warp_msg_allowed_roles', [])

@@ -188,6 +188,28 @@ def is_allowed(interaction: discord.Interaction):
     logger.info(f"用户 {interaction.user.name} 检查权限，结果: {has_permission}")
     return has_permission
 
+def is_warp_msg_allowed(interaction: discord.Interaction):
+    """
+    检查用户是否有权限使用 warp_msg 命令
+    - 管理员默认有权限
+    - 否则检查是否拥有 warp_msg_allowed_roles 中的角色
+    
+    Args:
+        interaction (discord.Interaction): Discord 交互对象
+    
+    Returns:
+        bool: True 表示有权限，False 表示无权限
+    """
+    guild_id = str(interaction.guild.id)
+    config = config_manager.get_guild_config(guild_id)
+    warp_msg_allowed_roles = config_manager.get_warp_msg_allowed_roles(guild_id)
+    if interaction.user.guild_permissions.administrator:
+        logger.info(f"用户 {interaction.user.name} 是管理员，允许使用 warp_msg")
+        return True
+    has_permission = any(role.id in warp_msg_allowed_roles for role in interaction.user.roles)
+    logger.info(f"用户 {interaction.user.name} 检查 warp_msg 权限，结果: {has_permission}")
+    return has_permission
+
 @bot.tree.command(name="activate_key", description="使用密钥激活 Bot")
 @app_commands.describe(key="激活密钥")
 async def activate_key(interaction: discord.Interaction, key: str):
@@ -463,15 +485,94 @@ async def check_access(interaction: discord.Interaction):
     else:
         await interaction.response.send_message('没有设置允许的身份组', ephemeral=True)
 
+# 新增命令：添加 warp_msg 权限
+@bot.tree.command(name="add_warp_msg_access", description="增加允许使用 warp_msg 的身份组")
+@app_commands.describe(role="允许的身份组（@身份组）")
+@app_commands.checks.has_permissions(administrator=True)  # 仅限管理员
+@check_activation()
+async def add_warp_msg_access(interaction: discord.Interaction, role: discord.Role):
+    """
+    为 warp_msg 命令添加允许的身份组，仅限管理员操作
+    
+    Args:
+        interaction (discord.Interaction): Discord 交互对象
+        role (discord.Role): 要添加的身份组
+    """
+    guild_id = str(interaction.guild.id)
+    warp_msg_allowed_roles = config_manager.get_warp_msg_allowed_roles(guild_id)
+    if role.id not in warp_msg_allowed_roles:
+        warp_msg_allowed_roles.append(role.id)
+        await config_manager.set_guild_config(guild_id, 'warp_msg_allowed_roles', warp_msg_allowed_roles)
+        roles = [interaction.guild.get_role(rid).name for rid in warp_msg_allowed_roles if interaction.guild.get_role(rid)]
+        await interaction.response.send_message(
+            f"已允许身份组 {role.name} 使用 warp_msg\n当前允许的身份组: {', '.join(roles)}",
+            ephemeral=True
+        )
+        logger.info(f"用户 {interaction.user.name} 为 warp_msg 添加角色权限: {role.name}")
+    else:
+        await interaction.response.send_message(f"身份组 {role.name} 已拥有 warp_msg 权限", ephemeral=True)
+        logger.info(f"用户 {interaction.user.name} 尝试重复添加 warp_msg 权限: {role.name}")
+
+# 新增命令：移除 warp_msg 权限
+@bot.tree.command(name="remove_warp_msg_access", description="移除允许使用 warp_msg 的身份组")
+@app_commands.describe(role="要移除的身份组（@身份组）")
+@app_commands.checks.has_permissions(administrator=True)  # 仅限管理员
+@check_activation()
+async def remove_warp_msg_access(interaction: discord.Interaction, role: discord.Role):
+    """
+    移除 warp_msg 命令的允许身份组，仅限管理员操作
+    
+    Args:
+        interaction (discord.Interaction): Discord 交互对象
+        role (discord.Role): 要移除的身份组
+    """
+    guild_id = str(interaction.guild.id)
+    warp_msg_allowed_roles = config_manager.get_warp_msg_allowed_roles(guild_id)
+    if role.id in warp_msg_allowed_roles:
+        warp_msg_allowed_roles.remove(role.id)
+        await config_manager.set_guild_config(guild_id, 'warp_msg_allowed_roles', warp_msg_allowed_roles)
+        roles = [interaction.guild.get_role(rid).name for rid in warp_msg_allowed_roles if interaction.guild.get_role(rid)]
+        await interaction.response.send_message(
+            f"已移除身份组 {role.name} 的 warp_msg 权限\n当前允许的身份组: {', '.join(roles) if roles else '无'}",
+            ephemeral=True
+        )
+        logger.info(f"用户 {interaction.user.name} 移除 warp_msg 角色权限: {role.name}")
+    else:
+        await interaction.response.send_message(f"身份组 {role.name} 未拥有 warp_msg 权限", ephemeral=True)
+        logger.info(f"用户 {interaction.user.name} 尝试移除不存在的 warp_msg 权限: {role.name}")
+
+# 新增命令：查看 warp_msg 权限
+@bot.tree.command(name="check_warp_msg_access", description="查看允许使用 warp_msg 的身份组")
+@app_commands.checks.has_permissions(administrator=True)  # 仅限管理员
+@check_activation()
+async def check_warp_msg_access(interaction: discord.Interaction):
+    """
+    查看当前允许使用 warp_msg 的身份组，仅限管理员
+    
+    Args:
+        interaction (discord.Interaction): Discord 交互对象
+    """
+    guild_id = str(interaction.guild.id)
+    warp_msg_allowed_roles = config_manager.get_warp_msg_allowed_roles(guild_id)
+    if warp_msg_allowed_roles:
+        roles = [interaction.guild.get_role(rid).name for rid in warp_msg_allowed_roles if interaction.guild.get_role(rid)]
+        await interaction.response.send_message(
+            f"当前允许使用 warp_msg 的身份组: {', '.join(roles)}",
+            ephemeral=True
+        )
+        logger.info(f"用户 {interaction.user.name} 查看 warp_msg 权限: {', '.join(roles)}")
+    else:
+        await interaction.response.send_message("没有设置允许使用 warp_msg 的身份组", ephemeral=True)
+        logger.info(f"用户 {interaction.user.name} 查看 warp_msg 权限: 无")
+
+# 修改 warp_msg，添加独立权限检查
 @bot.tree.command(name="warp_msg", description="手动触发 LLM 分析并同步到 Telegram")
-@app_commands.check(is_allowed)
+@app_commands.check(is_warp_msg_allowed)  # 使用独立的权限检查
 @check_activation()
 async def warp_msg(interaction: discord.Interaction):
     """
     手动触发 LLM 分析当前 Ticket 频道的内容，并推送结果到 Telegram。
-    
-    Args:
-        interaction (discord.Interaction): Discord 交互对象
+    - 仅限管理员或拥有 warp_msg_allowed_roles 的用户使用
     """
     channel = interaction.channel
     guild_id = str(interaction.guild.id)
@@ -479,9 +580,9 @@ async def warp_msg(interaction: discord.Interaction):
     if not is_ticket_channel(channel, config):
         await interaction.response.send_message("只能在 Ticket 频道中使用", ephemeral=True)
         return
-    await interaction.response.defer(ephemeral=True)  # 延迟响应，避免超时
+    await interaction.response.defer(ephemeral=True)
     conversation = await get_conversation(channel)
-    creation_time = channel.created_at or datetime.datetime.now(datetime.timezone.utc)  # 兜底使用当前时间
+    creation_time = channel.created_at or datetime.datetime.now(datetime.timezone.utc)
     llm_config = config_manager.get_llm_config(guild_id) or {
         'api_key': DEFAULT_LLM_API_KEY,
         'model_id': DEFAULT_MODEL_ID,
@@ -544,6 +645,11 @@ async def help_command(interaction: discord.Interaction):
 - `/set_access role` 设置命令权限角色
 - `/remove_access role` 移除权限角色
 - `/set_timezone offset` 设置时区偏移  
+
+**Warp_msg 权限管理（仅限管理员）**
+- `/add_warp_msg_access <role>` 增加允许使用 warp_msg 的身份组
+- `/remove_warp_msg_access <role>` 移除允许使用 warp_msg 的身份组
+- `/check_warp_msg_access` 查看允许使用 warp_msg 的身份组
 
 **其他命令**  
 - `/warp_msg` 手动分析 Ticket 频道并推送  
