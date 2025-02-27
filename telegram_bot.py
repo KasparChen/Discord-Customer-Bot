@@ -47,7 +47,7 @@ class TelegramBot:
             f"时间: {problem['timestamp']}\n"  # 使用格式化后的时间戳 yyyy-mm-dd HH:MM UTC+{x}
             f"问题简述: {problem['summary']}\n"
             f"问题详情: {problem['details']}\n"
-            f"[>>跳转至Ticket<<]({encoded_link})\n"  # 简化超链接格式并使用编码后的链接
+            f"[跳转至Ticket]({encoded_link})\n"  # 简化超链接格式并使用编码后的链接
             f"-----------------------------"
         )
         try:
