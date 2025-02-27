@@ -379,6 +379,56 @@ async def set_timezone(interaction: discord.Interaction, offset: int):
         ephemeral=True
     )
 
+@bot.tree.command(name="help", description="显示Bot命令帮助信息")
+@app_commands.check(is_allowed)  # 限制权限，仅允许配置的角色或管理员使用
+async def help_command(interaction: discord.Interaction):
+    """
+    显示Bot所有命令的简述和配置流程，帮助用户快速上手。
+    参数:
+        interaction: Discord交互对象
+    """
+    help_text = """
+**Discord Bot 命令帮助**
+
+**必须配置的命令**  
+- `/set_ticket_cate category_ids`  
+  设置Ticket类别ID（用逗号分隔），用于识别Ticket频道。  
+- `/set_monitor_channels channels`  
+  设置监控的General Chat频道ID（最多5个，用逗号分隔）。  
+- `/set_tg_channel tg_channel_id`  
+  设置Telegram推送频道ID，用于接收反馈和总结。  
+
+**选择性配置的命令**  
+- `/set_monitor_params period_hours max_messages`  
+  设置General Chat监控周期（小时）和最大消息数。  
+- `/set_access role`  
+  设置允许使用Bot命令的角色（仅限管理员）。  
+- `/remove_access role`  
+  移除允许使用Bot命令的角色（仅限管理员）。  
+- `/set_timezone offset`  
+  设置时区偏移（如8表示UTC+8）。  
+  
+**其他命令**  
+- `/warp_msg` 手动触发LLM分析当前Ticket频道并推送至Telegram。  
+
+**查询命令**  
+- `/check_ticket_cate` 查看当前Ticket类别ID。  
+- `/check_monitor_channels` 查看当前监控的频道。  
+- `/check_tg_channel` 查看当前Telegram推送频道。  
+- `/check_monitor_params` 查看当前监控参数。  
+- `/check_access` 查看允许使用命令的角色。  
+
+**配置流程**  
+1. 使用 `/set_ticket_cate` 设置Ticket类别。  
+2. 使用 `/set_monitor_channels` 设置监控频道。  
+3. 使用 `/set_tg_channel` 设置Telegram推送目标。  
+4. （可选）使用 `/set_monitor_params` 调整监控参数。  
+5. （可选）使用 `/set_access` 限制命令权限。  
+6. （可选）使用 `/set_timezone` 设置时区。  
+"""
+    await interaction.response.send_message(help_text, ephemeral=True)  # 消息仅对使用者可见
+
+
 # 创建 Telegram Bot 实例
 telegram_bot = TelegramBot(TELEGRAM_TOKEN, config_manager, bot, LLM_API_KEY, BASE_URL, MODEL_ID)
 
