@@ -332,12 +332,13 @@ async def warp_msg(interaction: discord.Interaction):
     conversation = await get_conversation(channel)
 
     # 获取时间戳，包含兜底策略
-    creation_time = ticket_creation_times.get(channel.id)
+    channel = interaction.channel
+    creation_time = channel.created_at
     if creation_time is None:
         try:
-            channel = interaction.channel   # 获取当前所在的频道（ticket channel）
-            creation_time = channel.created_at  # 获取频道的创建时间（UTC 时间）
-            
+            async for message in channel.history(limit=1, oldest_first=True):
+                creation_time = message.created_at
+                logger.info(f"采用首条消息的创建时间戳: {creation_time}")
         except Exception as e:
             # 如果失败，使用当前时间作为最后兜底
             logger.error(f"无法获取频道 {channel.name} 的第一条消息时间: {e}")
