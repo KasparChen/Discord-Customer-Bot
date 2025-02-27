@@ -8,6 +8,7 @@ from config_manager import ConfigManager
 from llm_analyzer import analyze_general_conversation
 from utils import get_conversation
 from datetime import timezone, timedelta
+import urllib.parse
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,9 @@ class TelegramBot:
 
     async def send_problem_form(self, problem, tg_channel_id):
         """将问题反馈发送到指定的 Telegram 频道"""
+        # 对 URL 进行编码，确保特殊字符不会干扰 Markdown 解析
+        encoded_link = urllib.parse.quote(problem['link'], safe=':/')
+        # 构建消息内容，使用 Markdown 格式
         form = (
             f"--- Issue Summary #{problem['id']} ---\n"
             f"问题类型: {problem['problem_type']}\n"
@@ -43,7 +47,7 @@ class TelegramBot:
             f"时间: {problem['timestamp']}\n"  # 使用格式化后的时间戳 yyyy-mm-dd HH:MM UTC+{x}
             f"问题简述: {problem['summary']}\n"
             f"问题详情: {problem['details']}\n"
-            f"[>>跳转至Ticket<<]({problem['link']})\n"  # 新增：以 Markdown 超链接形式添加跳转链接
+            f"[>>跳转至Ticket<<]({encoded_link})\n"  # 简化超链接格式并使用编码后的链接
             f"-----------------------------"
         )
         try:
