@@ -36,22 +36,31 @@ class TelegramBot:
         logger.info("Telegram Bot 初始化完成")
 
     async def send_problem_form(self, problem, tg_channel_id):
-        """将问题反馈发送到指定的 Telegram 频道"""
-        # 对 URL 进行编码，确保特殊字符不会干扰 Markdown 解析
-        encoded_link = urllib.parse.quote(problem['link'], safe=':/')
-        # 构建消息内容，使用 Markdown 格式
+        """
+        将问题反馈发送到指定的 Telegram 频道，使用简洁的 HTML 格式。
+        
+        参数:
+            problem (dict): 包含问题信息的字典，键包括 id, problem_type, summary, source, timestamp, details, link
+            tg_channel_id (str): Telegram 频道的 ID
+        """
+        # 构建简洁的 HTML 格式消息
         form = (
-            f"--- Issue Summary #{problem['id']} ---\n"
-            f"问题类型: {problem['problem_type']}\n"
+            f"<b>Issue #{problem['id']}</b>\n"  # 使用 <b> 标签加粗标题
+            f"类型: {problem['problem_type']}\n"
+            f"简述: {problem['summary']}\n"
             f"来源: {problem['source']}\n"
-            f"时间: {problem['timestamp']}\n"  # 使用格式化后的时间戳 yyyy-mm-dd HH:MM UTC+{x}
-            f"问题简述: {problem['summary']}\n"
-            f"问题详情: {problem['details']}\n"
-            f"[跳转至Ticket]({encoded_link})\n"  # 简化超链接格式并使用编码后的链接
-            f"-----------------------------"
+            f"时间: {problem['timestamp']}\n"
+            f"详情: {problem['details']}\n"
+            f"<a href=\"{problem['link']}\">跳转至 Ticket</a>"  # 简洁的超链接
         )
+        
         try:
-            await self.application.bot.send_message(chat_id=tg_channel_id, text=form, parse_mode='Markdown')
+            # 发送 HTML 格式的消息
+            await self.application.bot.send_message(
+                chat_id=tg_channel_id,
+                text=form,
+                parse_mode='HTML'  # 指定解析模式为 HTML
+            )
             logger.info(f"问题已发送到 {tg_channel_id}: {problem['problem_type']}")
         except Exception as e:
             logger.error(f"发送问题到 {tg_channel_id} 失败: {e}")
