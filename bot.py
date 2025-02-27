@@ -335,10 +335,9 @@ async def warp_msg(interaction: discord.Interaction):
     creation_time = ticket_creation_times.get(channel.id)
     if creation_time is None:
         try:
-            # 尝试获取频道内第一条消息的时间
-            first_message = await channel.history(limit=1, oldest_first=True).next()
-            creation_time = first_message.created_at
-            logger.info(f"获取到频道 {channel.name} 的第一条消息时间: {creation_time}")
+            channel = interaction.channel   # 获取当前所在的频道（ticket channel）
+            creation_time = channel.created_at  # 获取频道的创建时间（UTC 时间）
+            
         except Exception as e:
             # 如果失败，使用当前时间作为最后兜底
             logger.error(f"无法获取频道 {channel.name} 的第一条消息时间: {e}")
@@ -385,9 +384,11 @@ telegram_bot = TelegramBot(TELEGRAM_TOKEN, config_manager, bot, LLM_API_KEY, BAS
 async def heartbeat_task():
     """心跳任务，每分钟记录一次日志以确认 Bot 运行状态，固定使用 UTC+8"""
     tz = pytz.timezone('Asia/Shanghai')  # 设置时区为 UTC+8（中国标准时间）
+    lasting_mins = 0
     while True:
-        local_time = datetime.datetime.now(tz)  # 获取当前 UTC+8 时间
-        heartbeat_logger.info(f"Bot is running at {local_time}")  # 记录带时间戳的心跳日志
+        local_time = datetime.datetime.now(tz).strftime("%Y-%m-%d %H:%M") + f" UTC+8"  # 获取当前 UTC+8 时间
+        lasting_mins += 1
+        heartbeat_logger.info(f"Bot alive at {local_time}, lasting for {lasting_mins} mins")  # 记录带时间戳的心跳日志
         await asyncio.sleep(60)  # 每60秒记录一次
 
 async def main():

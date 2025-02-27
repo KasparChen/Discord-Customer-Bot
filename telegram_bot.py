@@ -59,7 +59,8 @@ class TelegramBot:
             await self.application.bot.send_message(
                 chat_id=tg_channel_id,
                 text=form,
-                parse_mode='HTML'  # 指定解析模式为 HTML
+                parse_mode='HTML',  # 指定解析模式为 HTML
+                disable_web_page_preview=True  # 禁用链接预览
             )
             logger.info(f"问题已发送到 {tg_channel_id}: {problem['problem_type']}")
         except Exception as e:
