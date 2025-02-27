@@ -4,6 +4,7 @@ from langchain.output_parsers import PydanticOutputParser
 from models import Problem, GeneralSummary
 import logging
 from utils import is_ticket_channel
+from datetime import datetime, timezone, timedelta  # 新增，用于处理时区偏移
 
 logger = logging.getLogger(__name__)
 
@@ -56,8 +57,11 @@ def analyze_ticket_conversation(conversation, channel, guild_id, config, llm_api
     # 设置来源（source）为频道名称
     problem.source = channel.name if is_ticket_channel(channel, config) else 'General Chat'
     
-    # 设置 timestamp 为频道创建时间（ISO 格式）
-    problem.timestamp = creation_time.isoformat()
+    # 获取服务器的时区偏移，默认 UTC+0
+    timezone_offset = config.get('timezone', 0)
+    tz = timezone(timedelta(hours=timezone_offset))  # 根据偏移量创建时区对象
+    local_time = creation_time.astimezone(tz)  # 将创建时间调整为指定时区
+    problem.timestamp = local_time.isoformat()  # 设置时间戳为 ISO 格式
     
     # 记录分析完成日志
     logger.info(f"对话分析完成，发现问题: {problem.problem_type}")

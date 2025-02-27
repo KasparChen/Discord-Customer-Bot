@@ -7,6 +7,7 @@ import logging
 from logging.handlers import RotatingFileHandler  # 用于日志轮转，避免文件过大
 from dotenv import load_dotenv
 import datetime
+import pytz  # 新增，用于处理时区
 from config_manager import ConfigManager
 from utils import get_conversation, is_ticket_channel
 from llm_analyzer import analyze_ticket_conversation, analyze_general_conversation
@@ -340,13 +341,29 @@ async def msg_warp(interaction: discord.Interaction):
         logger.error(f"无法获取频道 {channel.name} 的创建时间")
         await interaction.followup.send("无法获取频道创建时间", ephemeral=True)
 
+@bot.tree.command(name="set_timezone", description="设置时区偏移（UTC + x）")
+@app_commands.describe(offset="时区偏移量（整数，例如 8 表示 UTC+8）")
+@app_commands.check(is_allowed)
+async def set_timezone(interaction: discord.Interaction, offset: int):
+    """设置时区偏移的斜杠命令，用于调整问题总结中的时间戳"""
+    guild_id = str(interaction.guild.id)
+    await config_manager.set_guild_config(guild_id, 'timezone', offset)  # 将时区偏移量存储到配置中
+    config = config_manager.get_guild_config(guild_id)
+    logger.info(f"用户 {interaction.user.name} 设置时区偏移: UTC+{offset}")
+    await interaction.response.send_message(
+        f'时区偏移已设置为 UTC+{offset}\n当前时区偏移: {config.get("timezone", "未设置")}',
+        ephemeral=True
+    )
+
 # 创建 Telegram Bot 实例
 telegram_bot = TelegramBot(TELEGRAM_TOKEN, config_manager, bot, LLM_API_KEY, BASE_URL, MODEL_ID)
 
 async def heartbeat_task():
-    """心跳任务，每分钟记录一次日志以确认 Bot 运行状态"""
+    """心跳任务，每分钟记录一次日志以确认 Bot 运行状态，固定使用 UTC+8"""
+    tz = pytz.timezone('Asia/Shanghai')  # 设置时区为 UTC+8（中国标准时间）
     while True:
-        heartbeat_logger.info("Bot is running")
+        local_time = datetime.datetime.now(tz)  # 获取当前 UTC+8 时间
+        heartbeat_logger.info(f"Bot is running at {local_time}")  # 记录带时间戳的心跳日志
         await asyncio.sleep(60)  # 每60秒记录一次
 
 async def main():
