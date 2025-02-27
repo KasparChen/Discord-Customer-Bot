@@ -6,7 +6,7 @@
 
 **[English Version (英文版)](./README-EN.md)**
 
----
+![hermes banner](https://github.com/user-attachments/assets/858ac1f3-ed0d-4baf-bb07-cfed84e60021)
 
 ## 项目简介
 

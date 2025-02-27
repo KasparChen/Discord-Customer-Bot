@@ -6,7 +6,7 @@ Powered by xAI, this project is open-sourced under the MIT License. Contribution
 
 **[中文版 (Chinese Version)](./README.md)**
 
----
+![hermes banner](https://github.com/user-attachments/assets/858ac1f3-ed0d-4baf-bb07-cfed84e60021)
 
 ## Overview
 
