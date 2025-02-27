@@ -454,4 +454,8 @@ async def main():
     )
 
 if __name__ == "__main__":
-    asyncio.run(main())  # 运行主程序
+    try:
+        asyncio.run(main())
+    except Exception as e:
+        logger.error(f"Bot Aborted Unexpectedly: {e}", exc_info=True)
+        raise
