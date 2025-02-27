@@ -45,13 +45,13 @@ class TelegramBot:
         """
         # 构建简洁的 HTML 格式消息
         form = (
-            f"<b>----- Issue #{problem['id']} -----</b>\n\n"  # 使用 <b> 标签加粗标题
+            f"<b>----- Issue #{problem['id']} -----</b>\n"  # 使用 <b> 标签加粗标题
             f"类型: <b>{problem['problem_type']}</b>\n\n"
             f"来源: <b>{problem['source']}</b>\n\n"
             f"时间: <b>{problem['timestamp']}</b>\n\n"
             f"简述: {problem['summary']}\n\n"
-            f"详情: {problem['details']}\n"
-            f"<a href=\"{problem['link']}\"><em>🔗跳转至 Ticket</em></a>\n"  # 简洁的超链接
+            f"详情: {problem['details']}\n\n"
+            f"<a href=\"{problem['link']}\"><em>🔗 跳转至 Ticket</em></a>\n"  # 简洁的超链接
             f"------------------------------------------"
         )
         
@@ -70,7 +70,7 @@ class TelegramBot:
     async def send_general_summary(self, summary, tg_channel_id):
         """将 General Chat 总结发送到指定的 Telegram 频道"""
         form = (
-            f"<b>===== Chat Summary =====</b>\n\n"
+            f"<b>===== Chat Summary =====</b>\n"
             f"发布时间: <b>{summary['publish_time']}</b>\n\n"  # 使用格式化后的时间戳 yyyy-mm-dd HH:MM UTC+{x}
             f"监控周期: <b>{summary['monitor_period']}</b>\n\n"
             f"监控消息数: <b>{summary['monitored_messages']}</b>\n\n"
