@@ -4,7 +4,7 @@
 
 本项目由 xAI 提供支持，代码遵循 MIT 许可证开源，欢迎社区贡献与反馈！
 
-**[English Version (英文版)](./README.md)**
+**[English Version (英文版)](./README-EN.md)**
 
 ---
 
