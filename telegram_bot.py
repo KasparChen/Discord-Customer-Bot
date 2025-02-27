@@ -45,14 +45,14 @@ class TelegramBot:
         """
         # 构建简洁的 HTML 格式消息
         form = (
-            f"<b>----- Issue #{problem['id']} -----</b>\n"  # 使用 <b> 标签加粗标题
-            f"类型: {problem['problem_type']}\n"
-            f"来源: {problem['source']}\n"
-            f"时间: {problem['timestamp']}\n"
-            f"简述: {problem['summary']}\n"
-            f"详情: {problem['details']}\n"
-            f"<a href=\"{problem['link']}\">🔗 跳转至 Ticket</a>\n"  # 简洁的超链接
-            f"-----------------------------------\n"
+            f"<b>----- Issue #{problem['id']} -----</b>\n\n"  # 使用 <b> 标签加粗标题
+            f"类型:<b>{problem['problem_type']}</b>\n\n"
+            f"来源:<b>{problem['source']}</b>\n\n"
+            f"时间:<b>{problem['timestamp']}</b>\n\n"
+            f"简述:{problem['summary']}\n\n"
+            f"详情:{problem['details']}\n\n"
+            f"<a href=\"{problem['link']}\"><em>🔗 跳转至 Ticket</em></a>\n"  # 简洁的超链接
+            f"------------------------------------------"
         )
         
         try:
@@ -70,18 +70,18 @@ class TelegramBot:
     async def send_general_summary(self, summary, tg_channel_id):
         """将 General Chat 总结发送到指定的 Telegram 频道"""
         form = (
-            f"===== Chat Summary =====\n"
-            f"发布时间: {summary['publish_time']}\n"  # 使用格式化后的时间戳 yyyy-mm-dd HH:MM UTC+{x}
-            f"监控周期: {summary['monitor_period']}\n"
-            f"监控消息数: {summary['monitored_messages']}\n"
-            f"周期内消息数: {summary['total_messages']}\n"
-            f"情绪: {summary['emotion']}\n"
-            f"讨论概述: {summary['discussion_summary']}\n"
+            f"<b>===== Chat Summary =====</b>\n\n"
+            f"发布时间: <b>{summary['publish_time']}</b>\n\n"  # 使用格式化后的时间戳 yyyy-mm-dd HH:MM UTC+{x}
+            f"监控周期: <b>{summary['monitor_period']}</b>\n\n"
+            f"监控消息数: <b>{summary['monitored_messages']}</b>\n\n"
+            f"周期内消息数: <b>{summary['total_messages']}</b>\n\n"
+            f"情绪: <b>{summary['emotion']}</b>\n\n"
+            f"讨论概述: {summary['discussion_summary']}\n\n"
             f"重点关注事件: {summary['key_events']}\n"
-            f"========================="
+            f"============================"
         )
         try:
-            await self.application.bot.send_message(chat_id=tg_channel_id, text=form)
+            await self.application.bot.send_message(chat_id=tg_channel_id, text=form, parse_mode='HTML')
             logger.info(f"General Chat 总结已发送到 {tg_channel_id}")
         except Exception as e:
             logger.error(f"发送总结到 {tg_channel_id} 失败: {e}")
