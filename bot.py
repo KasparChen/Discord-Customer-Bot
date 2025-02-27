@@ -308,38 +308,62 @@ async def check_access(interaction: discord.Interaction):
         logger.info(f"用户 {interaction.user.name} 查看允许角色: 无")
         await interaction.response.send_message('没有设置允许的身份组', ephemeral=True)
 
-@bot.tree.command(name="msg_warp", description="手动触发 LLM 分析并同步到 Telegram")
+@bot.tree.command(name="warp_msg", description="手动触发 LLM 分析并同步到 Telegram")
 @app_commands.check(is_allowed)
-async def msg_warp(interaction: discord.Interaction):
-    """手动触发 Ticket 频道分析并同步到 Telegram 的斜杠命令"""
+async def warp_msg(interaction: discord.Interaction):
+    """
+    手动触发 LLM 分析当前 Ticket 频道的内容，并将结果同步到 Telegram
+    包含时间戳兜底策略：如果无法获取频道创建时间，则使用第一条消息时间
+    """
     channel = interaction.channel
     guild_id = str(interaction.guild.id)
-    if not is_ticket_channel(channel, config_manager.get_guild_config(guild_id)):  # 检查是否为 Ticket 频道
-        logger.warning(f"用户 {interaction.user.name} 尝试在非 Ticket 频道 {channel.name} 使用 msg_warp")
+    config = config_manager.get_guild_config(guild_id)
+
+    # 检查是否为 Ticket 频道
+    if not is_ticket_channel(channel, config):
+        logger.warning(f"用户 {interaction.user.name} 尝试在非 Ticket 频道 {channel.name} 使用 warp_msg")
         await interaction.response.send_message("只能在 Ticket 频道中使用", ephemeral=True)
         return
-    await interaction.response.defer(ephemeral=True)  # 延迟响应，避免超时
-    conversation = await get_conversation(channel)  # 获取频道对话内容
-    creation_time = ticket_creation_times.get(channel.id)  # 获取频道创建时间
+
+    # 延迟响应，避免超时
+    await interaction.response.defer(ephemeral=True)
+
+    # 获取频道会话
+    conversation = await get_conversation(channel)
+
+    # 获取时间戳，包含兜底策略
+    creation_time = ticket_creation_times.get(channel.id)
+    if creation_time is None:
+        try:
+            # 尝试获取频道内第一条消息的时间
+            first_message = await channel.history(limit=1, oldest_first=True).next()
+            creation_time = first_message.created_at
+            logger.info(f"获取到频道 {channel.name} 的第一条消息时间: {creation_time}")
+        except Exception as e:
+            # 如果失败，使用当前时间作为最后兜底
+            logger.error(f"无法获取频道 {channel.name} 的第一条消息时间: {e}")
+            creation_time = datetime.datetime.now(datetime.timezone.utc)
+            logger.info(f"使用当前时间作为频道 {channel.name} 的时间戳: {creation_time}")
+
+    # 执行分析并同步结果
     if creation_time:
-        # 使用 LLM 分析 Ticket 对话，运行在单独线程
         problem = await asyncio.to_thread(
             analyze_ticket_conversation, conversation, channel, guild_id,
-            config_manager.get_guild_config(guild_id), LLM_API_KEY, BASE_URL, MODEL_ID, creation_time
+            config, LLM_API_KEY, BASE_URL, MODEL_ID, creation_time
         )
-        if problem['is_valid']:  # 如果分析结果有效
-            problem['id'] = await config_manager.get_next_problem_id()  # 分配问题 ID
-            tg_channel_id = config_manager.get_guild_config(guild_id).get('tg_channel_id')
+        if problem['is_valid']:
+            problem['id'] = await config_manager.get_next_problem_id()
+            tg_channel_id = config.get('tg_channel_id')
             if tg_channel_id:
-                await telegram_bot.send_problem_form(problem, tg_channel_id)  # 发送到 Telegram
+                await telegram_bot.send_problem_form(problem, tg_channel_id)
                 logger.info(f"用户 {interaction.user.name} 手动分析完成，问题 ID: {problem['id']} 已发送到 {tg_channel_id}")
             await interaction.followup.send(f"问题反馈已生成并同步，ID: {problem['id']}", ephemeral=True)
         else:
             logger.info(f"用户 {interaction.user.name} 手动分析结果无效，频道: {channel.name}")
             await interaction.followup.send("分析结果无效，未生成问题反馈", ephemeral=True)
     else:
-        logger.error(f"无法获取频道 {channel.name} 的创建时间")
-        await interaction.followup.send("无法获取频道创建时间", ephemeral=True)
+        logger.error(f"无法获取频道 {channel.name} 的时间戳")
+        await interaction.followup.send("无法获取频道时间戳", ephemeral=True)
 
 @bot.tree.command(name="set_timezone", description="设置时区偏移（UTC + x）")
 @app_commands.describe(offset="时区偏移量（整数，例如 8 表示 UTC+8）")
