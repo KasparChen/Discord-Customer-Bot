@@ -19,6 +19,14 @@ Notably, 99% of this project’s codebase was crafted by xAI’s Grok 3 Beta.
 ## Features in Detail
 
 ### Discord Features
+- **Bot Activation Management**  
+  The Bot requires activation before use, supporting two methods:  
+  - **Key Activation**: Use `/activate_key <key>`, where `<key>` must match `MY_ACTIVE_KEY` in `.env`. Activates with default LLM config.  
+    - Example: `/activate_key x7k9p-q2m4j-r8n5t-z3v1w`  
+  - **LLM Config Activation**: Use `/activate_llm <api_key> <model_id> <base_url>` to bind a custom LLM config to the current server.  
+    - Example: `/activate_llm my-api-key gpt-model https://api.example.com/v1`  
+  - **Logic**: Commands are disabled until activated; key activation can be overridden by LLM config.
+
 - **Ticket Management**  
   Automatically detects and analyzes conversations in Discord Ticket channels, generating structured issue reports synced to Telegram.  
   - **Auto-Analysis**: For channels under specified categories (`ticket_category_ids`), the Bot waits 1 hour (3600 seconds) before analyzing the conversation to determine issue validity.  
@@ -53,6 +61,8 @@ Notably, 99% of this project’s codebase was crafted by xAI’s Grok 3 Beta.
   - **Use Case**: Ensuring time consistency for cross-timezone teams.
 
 - **Command List**  
+  - `/activate_key <key>`: Activate the Bot with a key.  
+  - `/activate_llm <api_key> <model_id> <base_url>`: Activate with a custom LLM config.
   - `/set_ticket_cate <category_ids>`: Set Ticket category IDs (comma-separated, e.g., `123456789, 987654321`).  
     - Example: `/set_ticket_cate 123456789, 987654321`  
   - `/check_ticket_cate`: Display current Ticket categories and names.  
@@ -154,9 +164,21 @@ Create a `.env` file in the root directory:
 ~~~
 DISCORD_TOKEN=your_discord_bot_token
 TELEGRAM_TOKEN=your_telegram_bot_token
+MY_ACTIVE_KEY=your-secret-activation-key  # Activation key for the Bot, use a complex string for security
 MODEL_ID=your_llm_model_id
 LLM_API_KEY=your_llm_api_key
+BASE_URL=https://ark.cn-beijing.volces.com/api/v3  # Optional, LLM API base URL
 ~~~
+- **Note**: `MY_ACTIVE_KEY` is a required activation key. If not set, the Bot will fail to start. Use a complex string (e.g., `x7k9p-q2m4j-r8n5t-z3v1w`) with at least 16 characters.
+
+### Activate the Bot
+The Bot starts in an inactive state, with all features disabled. Activate it using one of these methods:
+1. **Key Activation**:
+   - Run `/activate_key <key>` in Discord, where `<key>` matches `MY_ACTIVE_KEY` in `.env`.
+   - Upon success, the Bot uses the default LLM config from `.env` (`LLM_API_KEY`, `MODEL_ID`, `BASE_URL`).
+2. **Custom LLM Config Activation**:
+   - Use `/activate_llm <api_key> <model_id> <base_url>` to input a custom LLM configuration.
+   - This config binds to the current Discord server, overrides the default, and encrypts the API key.
 
 ### Install Dependencies
 ~~~
@@ -170,6 +192,7 @@ python bot.py
 
 ### Verify Operation
 - Check `bot.log` and `heartbeat.log` for startup confirmation.
+- Activate the Bot in Discord using `/activate_key` or `/activate_llm`.
 - Use `/help` in Discord to view command assistance.
 
 ---

@@ -30,6 +30,14 @@ Discord-Customer-Bot 是一个针对 Discord 社区内用户问题的高效总�
 ## 功能详解
 
 ### Discord 功能
+- **Bot 激活管理**  
+  Bot 启动后需激活才能使用功能，支持两种激活方式：  
+  - **密钥激活**：使用 `/activate_key <key>`，密钥需与 `.env` 中的 `MY_ACTIVE_KEY` 匹配，激活后使用默认 LLM 配置。  
+    - 示例: `/activate_key x7k9p-q2m4j-r8n5t-z3v1w`  
+  - **LLM 配置激活**：使用 `/activate_llm <api_key> <model_id> <base_url>`，绑定自定义 LLM 配置到当前服务器。  
+    - 示例: `/activate_llm my-api-key gpt-model https://api.example.com/v1`  
+  - **逻辑**：未激活时，所有命令不可用；密钥激活后可被 LLM 配置覆盖。
+
 - **Ticket 管理**  
   自动检测并分析 Discord 中的 Ticket 频道对话，生成结构化的问题报告并推送至 Telegram。  
   - **自动分析**: 在指定类别（`ticket_category_ids`）下的频道被识别为 Ticket 频道后，Bot 会等待 1 小时（3600 秒），然后分析对话内容，判断是否构成有效问题。  
@@ -64,6 +72,8 @@ Discord-Customer-Bot 是一个针对 Discord 社区内用户问题的高效总�
   - **使用场景**: 跨时区团队协作，确保时间一致性。
 
 - **命令列表**  
+  - `/activate_key <key>`: 使用密钥激活 Bot。  
+  - `/activate_llm <api_key> <model_id> <base_url>`: 使用自定义 LLM 配置激活 Bot。
   - `/set_ticket_cate <category_ids>`: 设置 Ticket 类别 ID，用逗号分隔（如 `123456789, 987654321`）。  
     - 示例: `/set_ticket_cate 123456789, 987654321`  
   - `/check_ticket_cate`: 查看当前设置的 Ticket 类别及其名称。  
@@ -160,14 +170,26 @@ Discord-Customer-Bot 是一个针对 Discord 社区内用户问题的高效总�
    heartbeat_off - 关闭心跳日志接收
    ~~~
 
-### 配置 `.env` 文件
+#### 配置 `.env` 文件
 在项目根目录创建 `.env` 文件，格式如下：
 ~~~
 DISCORD_TOKEN=your_discord_bot_token
 TELEGRAM_TOKEN=your_telegram_bot_token
+MY_ACTIVE_KEY=your-secret-activation-key  # 用于激活 Bot 的密钥，自定义复杂字符串以确保安全
 MODEL_ID=your_llm_model_id
 LLM_API_KEY=your_llm_api_key
+BASE_URL=https://ark.cn-beijing.volces.com/api/v3  # 可选，LLM API 基础 URL
 ~~~
+- **注意**：`MY_ACTIVE_KEY` 是必须配置的激活密钥，未设置将导致 Bot 无法启动。建议使用至少 16 位以上的复杂字符串（如 `x7k9p-q2m4j-r8n5t-z3v1w`）。
+
+#### 激活 Bot
+Bot 启动后，默认处于未激活状态，所有功能不可用。需要通过以下任一方式激活：
+1. **密钥激活**：
+   - 在 Discord 中使用命令 `/activate_key <key>`，其中 `<key>` 必须与 `.env` 中的 `MY_ACTIVE_KEY` 匹配。
+   - 激活后，Bot 将使用 `.env` 中定义的默认 LLM 配置（`LLM_API_KEY`, `MODEL_ID`, `BASE_URL`）。
+2. **自定义 LLM 配置激活**：
+   - 使用命令 `/activate_llm <api_key> <model_id> <base_url>` 输入自定义 LLM 配置。
+   - 配置将被绑定到当前 Discord 服务器，优先于默认配置使用，且 API key 会加密存储。
 
 ### 安装依赖
 ~~~
@@ -181,6 +203,7 @@ python bot.py
 
 ### 验证运行
 - 检查 `bot.log` 和 `heartbeat.log`，确认 Bot 已启动。
+- 在 Discord 使用 `/activate_key` 或 `/activate_llm` 激活 Bot。
 - 在 Discord 使用 `/help` 查看命令帮助。
 
 ---

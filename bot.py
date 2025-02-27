@@ -4,10 +4,10 @@ from discord.ext import commands
 import asyncio
 import os
 import logging
-from logging.handlers import RotatingFileHandler  # 用于日志轮转，避免文件过大
+from logging.handlers import RotatingFileHandler
 from dotenv import load_dotenv
 import datetime
-import pytz  # 新增，用于处理时区
+import pytz
 from config_manager import ConfigManager
 from utils import get_conversation, is_ticket_channel
 from llm_analyzer import analyze_ticket_conversation, analyze_general_conversation
@@ -26,431 +26,557 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# 配置心跳日志记录器
+# 配置心跳日志记录器，单独记录 Bot 运行状态
 heartbeat_logger = logging.getLogger('heartbeat')
 heartbeat_handler = RotatingFileHandler(
     'heartbeat.log',     # 心跳日志文件路径
-    maxBytes=5*1024*1024, # 单个日志文件最大 5MB
-    backupCount=5         # 保留 5 个备份文件
+    maxBytes=5*1024*1024,
+    backupCount=5
 )
 heartbeat_handler.setFormatter(logging.Formatter('%(asctime)s - %(message)s'))
 heartbeat_logger.addHandler(heartbeat_handler)
 heartbeat_logger.setLevel(logging.INFO)
 
-# 设置 httpx 日志级别为 WARNING，避免频繁的 getUpdates 请求污染日志
+# 设置 httpx 日志级别为 WARNING，避免频繁请求污染日志
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 # 加载环境变量
 load_dotenv()
-DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')  # Discord Bot 的 Token
-TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')  # Telegram Bot 的 Token
-MODEL_ID = os.getenv('MODEL_ID')  # LLM 模型 ID
-LLM_API_KEY = os.getenv('LLM_API_KEY')  # LLM API 密钥
-BASE_URL = 'https://ark.cn-beijing.volces.com/api/v3'  # LLM API 基础 URL
+DISCORD_TOKEN = os.getenv('DISCORD_TOKEN')
+TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
+MY_ACTIVE_KEY = os.getenv('MY_ACTIVE_KEY')  # 从 .env 读取激活密钥
+DEFAULT_LLM_API_KEY = os.getenv('LLM_API_KEY')
+DEFAULT_MODEL_ID = os.getenv('MODEL_ID')
+DEFAULT_BASE_URL = os.getenv('BASE_URL', 'https://ark.cn-beijing.volces.com/api/v3')
 
-# 初始化配置管理器和 Discord Bot
-config_manager = ConfigManager()  # 用于管理服务器配置
-intents = discord.Intents.default()  # 设置 Discord Bot 的权限意图
-intents.message_content = True  # 启用消息内容监听
-intents.guilds = True  # 启用服务器相关事件
-intents.guild_messages = True  # 启用服务器消息事件
-bot = commands.Bot(command_prefix='/', intents=intents)  # 创建 Bot 实例，使用斜杠命令前缀
+# 检查 MY_ACTIVE_KEY 是否配置
+if not MY_ACTIVE_KEY:
+    logger.error("MY_ACTIVE_KEY 未在 .env 文件中定义，请配置后重启 Bot")
+    raise ValueError("MY_ACTIVE_KEY 未定义，请在 .env 文件中设置激活密钥")
 
+# 初始化配置和 Bot
+config_manager = ConfigManager()
+intents = discord.Intents.default()
+intents.message_content = True
+intents.guilds = True
+intents.guild_messages = True
+bot = commands.Bot(command_prefix='/', intents=intents)
 # 全局变量
 bot_start_time = datetime.datetime.now(datetime.timezone.utc)  # Bot 启动时间，用于过滤旧消息
-ticket_creation_times = {}  # 存储 Ticket 频道的创建时间
+ticket_creation_times = {}  # 存储 Ticket 频道的创建时间，键为频道 ID，值为创建时间
+
+# 检查 Bot 是否激活的装饰器，用于限制命令使用
+def check_activation():
+    async def predicate(interaction: discord.Interaction):
+        """
+        检查 Bot 是否已激活，若未激活则阻止命令执行。
+        
+        Args:
+            interaction (discord.Interaction): Discord 交互对象
+        
+        Returns:
+            bool: True 表示已激活，False 表示未激活并发送提示
+        """
+        if not config_manager.is_bot_activated():
+            await interaction.response.send_message("Bot 未激活，请使用 `/activate_key` 或 `/activate_llm` 激活。", ephemeral=True)
+            return False
+        return True
+    return app_commands.check(predicate)
 
 @bot.event
 async def on_ready():
-    """Bot 就绪事件，当 Bot 成功登录 Discord 时触发"""
+    """
+    Bot 就绪事件，当 Bot 成功登录 Discord 时触发。
+    - 记录登录信息并同步斜杠命令。
+    """
     logger.info(f'Discord Bot 成功登录为 {bot.user}')
     try:
-        synced = await bot.tree.sync()  # 同步斜杠命令到 Discord
+        synced = await bot.tree.sync()  # 将斜杠命令同步到 Discord
         logger.info(f"斜杠命令已成功同步到 Discord，同步了 {len(synced)} 个命令")
     except Exception as e:
-        logger.error(f"斜杠命令同步失败: {e}")
+        logger.error(f"斜杠命令同步失败: {e}")  # 记录同步失败的异常
 
 @bot.event
 async def on_message(message):
-    """消息监听事件，处理每条新消息"""
-    if message.author == bot.user or message.created_at < bot_start_time:  # 忽略 Bot 自己的消息和启动前的消息
-        return
+    """
+    消息监听事件，处理每条新消息。
+    - 忽略 Bot 自己的消息和启动前的消息。
+    - 检查是否为 Ticket 频道并触发分析。
+    """
+    if message.author == bot.user or message.created_at < bot_start_time:
+        return  # 跳过 Bot 自己的消息或旧消息
     guild_id = str(message.guild.id)  # 获取服务器 ID
     config = config_manager.get_guild_config(guild_id)  # 获取服务器配置
     if is_ticket_channel(message.channel, config):  # 检查是否为 Ticket 频道
-        if message.channel.id not in ticket_creation_times:  # 如果是新 Ticket 频道
-            ticket_creation_times[message.channel.id] = message.created_at  # 记录创建时间
-            logger.info(f"检测到新 Ticket 频道: {message.channel.name}，创建时间: {message.created_at}")
-            asyncio.create_task(auto_analyze_ticket(message.channel, guild_id))  # 异步启动自动分析任务
-        logger.info(f"处理消息，频道: {message.channel.name}，发送者: {message.author.name}，内容: {message.content[:50]}...")
+        if message.channel.id not in ticket_creation_times:
+            ticket_creation_times[message.channel.id] = message.created_at  # 记录新 Ticket 频道创建时间
+            logger.info(f"检测到新 Ticket 频道: {message.channel.name}")
+            asyncio.create_task(auto_analyze_ticket(message.channel, guild_id))  # 异步启动自动分析
+        logger.info(f"处理消息，频道: {message.channel.name}，发送者: {message.author.name}")
         asyncio.create_task(process_message(message, guild_id))  # 异步处理消息
     await bot.process_commands(message)  # 处理其他命令
 
 async def auto_analyze_ticket(channel, guild_id):
-    """自动分析 Ticket 频道，等待1小时后执行"""
+    """
+    自动分析 Ticket 频道，等待1小时后执行。
+    - 如果 Bot 未激活，则跳过分析。
+    - 使用服务器绑定的 LLM 配置或默认配置进行分析。
+    
+    Args:
+        channel (discord.Channel): Ticket 频道对象
+        guild_id (str): Discord 服务器 ID
+    """
+    if not config_manager.is_bot_activated():
+        logger.info(f"Bot 未激活，跳过自动分析 Ticket 频道: {channel.name}")
+        return
     logger.info(f"开始自动分析 Ticket 频道: {channel.name}，等待 1 小时")
     await asyncio.sleep(3600)  # 等待1小时（3600秒）
     conversation = await get_conversation(channel)  # 获取频道对话内容
     creation_time = ticket_creation_times.get(channel.id)  # 获取频道创建时间
     if creation_time:
-        # 使用 LLM 分析 Ticket 对话，运行在单独线程以避免阻塞
+        # 获取 LLM 配置，优先使用服务器自定义配置
+        llm_config = config_manager.get_llm_config(guild_id) or {
+            'api_key': DEFAULT_LLM_API_KEY,
+            'model_id': DEFAULT_MODEL_ID,
+            'base_url': DEFAULT_BASE_URL
+        }
+        # 在单独线程中运行 LLM 分析，避免阻塞主线程
         problem = await asyncio.to_thread(
             analyze_ticket_conversation, conversation, channel, guild_id,
-            config_manager.get_guild_config(guild_id), LLM_API_KEY, BASE_URL, MODEL_ID, creation_time
+            config_manager.get_guild_config(guild_id), llm_config['api_key'],
+            llm_config['base_url'], llm_config['model_id'], creation_time
         )
         if problem and problem['is_valid']:  # 如果分析结果有效
-            problem['id'] = await config_manager.get_next_problem_id()  # 为问题分配唯一 ID
-            tg_channel_id = config_manager.get_guild_config(guild_id).get('tg_channel_id')  # 获取 Telegram 推送频道 ID
+            problem['id'] = await config_manager.get_next_problem_id()  # 分配唯一问题 ID
+            tg_channel_id = config_manager.get_guild_config(guild_id).get('tg_channel_id')
             if tg_channel_id:
                 await telegram_bot.send_problem_form(problem, tg_channel_id)  # 发送问题到 Telegram
-                logger.info(f"问题反馈已发送到 Telegram 频道 {tg_channel_id}，问题 ID: {problem['id']}")
+                logger.info(f"问题反馈已发送到 Telegram 频道 {tg_channel_id}")
         else:
             logger.info(f"频道 {channel.name} 不构成有效问题")
     else:
         logger.error(f"无法获取频道 {channel.name} 的创建时间")
 
 async def process_message(message, guild_id):
-    """实时消息处理（可扩展，目前为空）"""
-    pass  # 占位符，可根据需求扩展功能
+    """
+    实时消息处理，当前为空，可根据需求扩展。
+    
+    Args:
+        message (discord.Message): 收到的消息对象
+        guild_id (str): Discord 服务器 ID
+    """
+    pass  # 占位符，留给未来的功能扩展
 
 def is_allowed(interaction: discord.Interaction):
-    """检查用户是否有权限使用命令"""
+    """
+    检查用户是否有权限使用命令。
+    - 管理员默认有权限，其他用户需拥有配置的角色。
+    
+    Args:
+        interaction (discord.Interaction): Discord 交互对象
+    
+    Returns:
+        bool: True 表示有权限，False 表示无权限
+    """
     guild_id = str(interaction.guild.id)
     config = config_manager.get_guild_config(guild_id)
-    allowed_roles = config.get('allowed_roles', [])  # 获取允许的角色列表
-    if interaction.user.guild_permissions.administrator:  # 如果用户是管理员
+    allowed_roles = config.get('allowed_roles', [])  # 获取允许的角色 ID 列表
+    if interaction.user.guild_permissions.administrator:  # 检查是否为管理员
         logger.info(f"用户 {interaction.user.name} 是管理员，允许执行命令")
         return True
-    has_permission = any(role.id in allowed_roles for role in interaction.user.roles)  # 检查用户角色是否在允许列表中
+    has_permission = any(role.id in allowed_roles for role in interaction.user.roles)  # 检查用户角色
     logger.info(f"用户 {interaction.user.name} 检查权限，结果: {has_permission}")
     return has_permission
 
-@bot.tree.command(name="set_ticket_cate", description="设置 Ticket 类别 ID（用逗号分隔）")
+@bot.tree.command(name="activate_key", description="使用密钥激活 Bot")
+@app_commands.describe(key="激活密钥")
+async def activate_key(interaction: discord.Interaction, key: str):
+    """
+    使用固定密钥激活 Bot，使其可以使用默认 LLM 配置。
+    - 密钥必须与 .env 文件中的 MY_ACTIVE_KEY 匹配。
+    
+    Args:
+        interaction (discord.Interaction): Discord 交互对象
+        key (str): 用户提供的激活密钥
+    """
+    if await config_manager.activate_with_key(key, MY_ACTIVE_KEY):
+        await interaction.response.send_message(
+            "Bot 已成功激活，使用默认 LLM 配置。请妥善保管激活密钥，避免泄露。",
+            ephemeral=True
+        )
+        logger.info(f"用户 {interaction.user.name} 使用密钥激活 Bot")
+    else:
+        await interaction.response.send_message(
+            "密钥无效或 Bot 已激活，请检查输入或联系管理员。",
+            ephemeral=True
+        )
+        logger.warning(f"用户 {interaction.user.name} 使用无效密钥尝试激活: {key}")
+
+@bot.tree.command(name="activate_llm", description="使用自定义 LLM 配置激活 Bot")
+@app_commands.describe(api_key="LLM API Key", model_id="模型 ID", base_url="API Base URL")
+async def activate_llm(interaction: discord.Interaction, api_key: str, model_id: str, base_url: str):
+    """
+    使用自定义 LLM 配置激活 Bot，并绑定到当前服务器。
+    - 覆盖之前的服务器 LLM 配置（如果有）。
+    
+    Args:
+        interaction (discord.Interaction): Discord 交互对象
+        api_key (str): LLM API 密钥
+        model_id (str): LLM 模型 ID
+        base_url (str): LLM API 基础 URL
+    """
+    guild_id = str(interaction.guild.id)
+    await config_manager.activate_with_llm_config(guild_id, api_key, model_id, base_url)
+    await interaction.response.send_message(f"Bot 已激活并绑定到服务器 {interaction.guild.name} 的自定义 LLM 配置。", ephemeral=True)
+    logger.info(f"用户 {interaction.user.name} 在服务器 {guild_id} 配置了自定义 LLM")
+
+@bot.tree.command(name="set_ticket_cate", description="设置 Ticket 类别 ID")
 @app_commands.describe(category_ids="Ticket 类别 ID（用逗号分隔）")
 @app_commands.check(is_allowed)
+@check_activation()
 async def set_ticket_cate(interaction: discord.Interaction, category_ids: str):
-    """设置 Ticket 类别 ID 的斜杠命令"""
+    """
+    设置服务器的 Ticket 类别 ID，用于识别 Ticket 频道。
+    
+    Args:
+        interaction (discord.Interaction): Discord 交互对象
+        category_ids (str): 以逗号分隔的类别 ID 列表（如 "123, 456"）
+    """
     guild_id = str(interaction.guild.id)
     try:
-        ids = [int(id.strip()) for id in category_ids.split(',')]  # 将输入转换为整数列表
-        await config_manager.set_guild_config(guild_id, 'ticket_category_ids', ids)  # 更新配置
+        ids = [int(id.strip()) for id in category_ids.split(',')]  # 将字符串转换为整数列表
+        await config_manager.set_guild_config(guild_id, 'ticket_category_ids', ids)
         config = config_manager.get_guild_config(guild_id)
         logger.info(f"用户 {interaction.user.name} 设置 Ticket 类别 ID: {ids}")
-        await interaction.response.send_message(f'Ticket 类别 ID 已设置为: {ids}\n当前 Ticket 类别 ID: {config.get("ticket_category_ids", [])}', ephemeral=True)
+        await interaction.response.send_message(f'Ticket 类别 ID 已设置为: {ids}', ephemeral=True)
     except ValueError:
         logger.warning(f"用户 {interaction.user.name} 输入无效的类别 ID: {category_ids}")
-        await interaction.response.send_message("输入错误，请提供有效的类别 ID（用逗号分隔）。", ephemeral=True)
+        await interaction.response.send_message("输入错误，请提供有效的类别 ID。", ephemeral=True)
 
 @bot.tree.command(name="check_ticket_cate", description="查看当前的 Ticket 类别 ID")
 @app_commands.check(is_allowed)
+@check_activation()
 async def check_ticket_cate(interaction: discord.Interaction):
-    """查看当前 Ticket 类别 ID 的斜杠命令"""
+    """
+    查看当前服务器的 Ticket 类别 ID 和对应的类别名称。
+    
+    Args:
+        interaction (discord.Interaction): Discord 交互对象
+    """
     guild_id = str(interaction.guild.id)
     config = config_manager.get_guild_config(guild_id)
     ticket_cate_ids = config.get('ticket_category_ids', [])
     if ticket_cate_ids:
         guild = interaction.guild
         categories = [guild.get_channel(cid) for cid in ticket_cate_ids if guild.get_channel(cid) and guild.get_channel(cid).type == discord.ChannelType.category]
-        if categories:
-            response = "当前 Ticket 类别:\n" + "\n".join([f"{cate.name} (ID: {cate.id})" for cate in categories])
-        else:
-            response = "当前 Ticket 类别 ID 未对应任何类别"
+        response = "当前 Ticket 类别:\n" + "\n".join([f"{cate.name} (ID: {cate.id})" for cate in categories]) if categories else "当前 Ticket 类别 ID 未对应任何类别"
     else:
         response = "尚未设置 Ticket 类别"
-    logger.info(f"用户 {interaction.user.name} 查看 Ticket 类别: {response}")
     await interaction.response.send_message(response, ephemeral=True)
 
 @bot.tree.command(name="set_tg_channel", description="设置 Telegram 推送频道 ID")
 @app_commands.describe(tg_channel_id="Telegram 频道 ID")
 @app_commands.check(is_allowed)
+@check_activation()
 async def set_tg_channel(interaction: discord.Interaction, tg_channel_id: str):
-    """设置 Telegram 推送频道 ID 的斜杠命令"""
+    """
+    设置 Telegram 推送频道 ID，用于接收问题反馈和总结。
+    
+    Args:
+        interaction (discord.Interaction): Discord 交互对象
+        tg_channel_id (str): Telegram 频道 ID（如 "@MyChannel"）
+    """
     guild_id = str(interaction.guild.id)
-    await config_manager.set_guild_config(guild_id, 'tg_channel_id', tg_channel_id)  # 更新配置
-    config = config_manager.get_guild_config(guild_id)
-    logger.info(f"用户 {interaction.user.name} 设置 Telegram 推送频道: {tg_channel_id}")
-    await interaction.response.send_message(f'已设置 Telegram 推送频道: {tg_channel_id}\n当前 Telegram 推送频道: {config.get("tg_channel_id", "未设置")}', ephemeral=True)
+    await config_manager.set_guild_config(guild_id, 'tg_channel_id', tg_channel_id)
+    await interaction.response.send_message(f'已设置 Telegram 推送频道: {tg_channel_id}', ephemeral=True)
 
 @bot.tree.command(name="check_tg_channel", description="查看当前的 Telegram 推送频道")
 @app_commands.check(is_allowed)
+@check_activation()
 async def check_tg_channel(interaction: discord.Interaction):
-    """查看当前 Telegram 推送频道的斜杠命令"""
+    """
+    查看当前服务器绑定的 Telegram 推送频道。
+    
+    Args:
+        interaction (discord.Interaction): Discord 交互对象
+    """
     guild_id = str(interaction.guild.id)
     config = config_manager.get_guild_config(guild_id)
     tg_channel_id = config.get('tg_channel_id', '未设置')
-    if tg_channel_id != '未设置':
-        response = f"当前 Telegram 推送频道 ID: {tg_channel_id}\n请自行确认ID是否正确。"
-    else:
-        response = "尚未设置 Telegram 推送频道"
-    logger.info(f"用户 {interaction.user.name} 查看 Telegram 推送频道: {tg_channel_id}")
+    response = f"当前 Telegram 推送频道 ID: {tg_channel_id}" if tg_channel_id != '未设置' else "尚未设置 Telegram 推送频道"
     await interaction.response.send_message(response, ephemeral=True)
 
-@bot.tree.command(name="set_monitor_channels", description="设置监控的 General Chat 频道（最多5个）")
+@bot.tree.command(name="set_monitor_channels", description="设置监控的 General Chat 频道")
 @app_commands.describe(channels="频道 ID（用逗号分隔）")
 @app_commands.check(is_allowed)
+@check_activation()
 async def set_monitor_channels(interaction: discord.Interaction, channels: str):
-    """设置监控频道的斜杠命令"""
+    """
+    设置需要监控的 General Chat 频道，最多 5 个。
+    
+    Args:
+        interaction (discord.Interaction): Discord 交互对象
+        channels (str): 以逗号分隔的频道 ID 列表（如 "111, 222"）
+    """
     guild_id = str(interaction.guild.id)
-    channel_ids = [int(id.strip()) for id in channels.split(',')]  # 将输入转换为整数列表
-    if len(channel_ids) > 5:  # 限制最多5个频道
-        logger.warning(f"用户 {interaction.user.name} 尝试设置超过5个监控频道: {channel_ids}")
+    channel_ids = [int(id.strip()) for id in channels.split(',')]
+    if len(channel_ids) > 5:
         await interaction.response.send_message("最多只能设置5个频道", ephemeral=True)
         return
-    await config_manager.set_guild_config(guild_id, 'monitor_channels', channel_ids)  # 更新配置
-    config = config_manager.get_guild_config(guild_id)
-    logger.info(f"用户 {interaction.user.name} 设置监控频道: {channel_ids}")
-    await interaction.response.send_message(f'已设置监控频道: {channel_ids}\n当前监控频道: {config.get("monitor_channels", [])}', ephemeral=True)
+    await config_manager.set_guild_config(guild_id, 'monitor_channels', channel_ids)
+    await interaction.response.send_message(f'已设置监控频道: {channel_ids}', ephemeral=True)
 
 @bot.tree.command(name="remove_monitor_channels", description="移除监控的 General Chat 频道")
 @app_commands.describe(channels="频道 ID（用逗号分隔）")
 @app_commands.check(is_allowed)
+@check_activation()
 async def remove_monitor_channels(interaction: discord.Interaction, channels: str):
-    """移除监控频道的斜杠命令"""
+    """
+    从监控列表中移除指定的 General Chat 频道。
+    
+    Args:
+        interaction (discord.Interaction): Discord 交互对象
+        channels (str): 以逗号分隔的频道 ID 列表
+    """
     guild_id = str(interaction.guild.id)
-    channel_ids = [int(id.strip()) for id in channels.split(',')]  # 将输入转换为整数列表
+    channel_ids = [int(id.strip()) for id in channels.split(',')]
     current_channels = config_manager.get_guild_config(guild_id).get('monitor_channels', [])
-    updated_channels = [ch for ch in current_channels if ch not in channel_ids]  # 移除指定频道
-    await config_manager.set_guild_config(guild_id, 'monitor_channels', updated_channels)  # 更新配置
-    config = config_manager.get_guild_config(guild_id)
-    logger.info(f"用户 {interaction.user.name} 移除监控频道: {channel_ids}")
-    await interaction.response.send_message(f'已移除监控频道: {channel_ids}\n当前监控频道: {config.get("monitor_channels", [])}', ephemeral=True)
+    updated_channels = [ch for ch in current_channels if ch not in channel_ids]
+    await config_manager.set_guild_config(guild_id, 'monitor_channels', updated_channels)
+    await interaction.response.send_message(f'已移除监控频道: {channel_ids}', ephemeral=True)
 
 @bot.tree.command(name="check_monitor_channels", description="查看当前监控的频道")
 @app_commands.check(is_allowed)
+@check_activation()
 async def check_monitor_channels(interaction: discord.Interaction):
-    """查看当前监控频道的斜杠命令"""
+    """
+    查看当前服务器的监控频道及其名称。
+    
+    Args:
+        interaction (discord.Interaction): Discord 交互对象
+    """
     guild_id = str(interaction.guild.id)
     config = config_manager.get_guild_config(guild_id)
     monitor_channels = config.get('monitor_channels', [])
     if monitor_channels:
         guild = interaction.guild
         channels = [guild.get_channel(cid) for cid in monitor_channels if guild.get_channel(cid)]
-        if channels:
-            response = "当前监控频道:\n" + "\n".join([f"{ch.name} (ID: {ch.id})" for ch in channels])
-        else:
-            response = "当前监控频道 ID 未对应任何频道"
+        response = "当前监控频道:\n" + "\n".join([f"{ch.name} (ID: {ch.id})" for ch in channels]) if channels else "当前监控频道 ID 未对应任何频道"
     else:
         response = "尚未设置监控频道"
-    logger.info(f"用户 {interaction.user.name} 查看监控频道: {response}")
     await interaction.response.send_message(response, ephemeral=True)
 
 @bot.tree.command(name="set_monitor_params", description="设置监控周期和最大消息条数")
 @app_commands.describe(period_hours="监控周期（小时）", max_messages="最大消息条数")
 @app_commands.check(is_allowed)
+@check_activation()
 async def set_monitor_params(interaction: discord.Interaction, period_hours: int, max_messages: int):
-    """设置监控参数的斜杠命令"""
+    """
+    设置 General Chat 监控的周期和最大消息数。
+    
+    Args:
+        interaction (discord.Interaction): Discord 交互对象
+        period_hours (int): 监控周期（小时）
+        max_messages (int): 每次分析的最大消息数
+    """
     guild_id = str(interaction.guild.id)
-    await config_manager.set_guild_config(guild_id, 'monitor_period', period_hours)  # 设置监控周期
-    await config_manager.set_guild_config(guild_id, 'monitor_max_messages', max_messages)  # 设置最大消息数
-    config = config_manager.get_guild_config(guild_id)
-    logger.info(f"用户 {interaction.user.name} 设置监控参数: 周期={period_hours}小时, 最大消息数={max_messages}")
-    await interaction.response.send_message(f'已设置监控周期为 {period_hours} 小时，最大消息条数为 {max_messages}\n当前监控周期: {config.get("monitor_period", 3)} 小时，最大消息条数: {config.get("monitor_max_messages", 100)}', ephemeral=True)
+    await config_manager.set_guild_config(guild_id, 'monitor_period', period_hours)
+    await config_manager.set_guild_config(guild_id, 'monitor_max_messages', max_messages)
+    await interaction.response.send_message(f'已设置监控周期为 {period_hours} 小时，最大消息条数为 {max_messages}', ephemeral=True)
 
 @bot.tree.command(name="check_monitor_params", description="查看当前监控参数")
 @app_commands.check(is_allowed)
+@check_activation()
 async def check_monitor_params(interaction: discord.Interaction):
-    """查看当前监控参数的斜杠命令"""
+    """
+    查看当前服务器的监控周期和最大消息数。
+    
+    Args:
+        interaction (discord.Interaction): Discord 交互对象
+    """
     guild_id = str(interaction.guild.id)
     config = config_manager.get_guild_config(guild_id)
-    period = config.get('monitor_period', 3)  # 默认周期为3小时
-    max_messages = config.get('monitor_max_messages', 100)  # 默认最大消息数为100
-    logger.info(f"用户 {interaction.user.name} 查看监控参数: 周期={period}小时, 最大消息数={max_messages}")
+    period = config.get('monitor_period', 3)  # 默认 3 小时
+    max_messages = config.get('monitor_max_messages', 100)  # 默认 100 条
     await interaction.response.send_message(f'当前监控周期: {period} 小时，最大消息条数: {max_messages}', ephemeral=True)
 
 @bot.tree.command(name="set_access", description="设置允许使用 Bot 命令的身份组")
 @app_commands.describe(role="允许的身份组（@身份组）")
-@app_commands.checks.has_permissions(administrator=True)  # 仅限管理员使用
+@app_commands.checks.has_permissions(administrator=True)
+@check_activation()
 async def set_access(interaction: discord.Interaction, role: discord.Role):
-    """设置允许使用 Bot 命令的角色的斜杠命令"""
+    """
+    设置允许使用 Bot 命令的角色，仅限管理员操作。
+    
+    Args:
+        interaction (discord.Interaction): Discord 交互对象
+        role (discord.Role): 要授权的身份组
+    """
     guild_id = str(interaction.guild.id)
     allowed_roles = config_manager.get_guild_config(guild_id).get('allowed_roles', [])
-    if role.id not in allowed_roles:  # 如果角色尚未被添加
+    if role.id not in allowed_roles:
         allowed_roles.append(role.id)
-        await config_manager.set_guild_config(guild_id, 'allowed_roles', allowed_roles)  # 更新配置
-        config = config_manager.get_guild_config(guild_id)
-        roles = [interaction.guild.get_role(rid).name for rid in config.get("allowed_roles", []) if interaction.guild.get_role(rid)]
-        logger.info(f"用户 {interaction.user.name} 设置允许角色: {role.name}")
+        await config_manager.set_guild_config(guild_id, 'allowed_roles', allowed_roles)
+        roles = [interaction.guild.get_role(rid).name for rid in allowed_roles if interaction.guild.get_role(rid)]
         await interaction.response.send_message(f'已允许身份组 {role.name} 使用命令\n当前允许的身份组: {", ".join(roles)}', ephemeral=True)
     else:
-        logger.info(f"用户 {interaction.user.name} 尝试重复设置允许角色: {role.name}")
         await interaction.response.send_message(f'身份组 {role.name} 已有权限', ephemeral=True)
 
 @bot.tree.command(name="remove_access", description="移除允许使用 Bot 命令的身份组")
 @app_commands.describe(role="要移除的身份组（@身份组）")
-@app_commands.checks.has_permissions(administrator=True)  # 仅限管理员使用
+@app_commands.checks.has_permissions(administrator=True)
+@check_activation()
 async def remove_access(interaction: discord.Interaction, role: discord.Role):
-    """移除允许使用 Bot 命令的角色的斜杠命令"""
+    """
+    移除允许使用 Bot 命令的角色，仅限管理员操作。
+    
+    Args:
+        interaction (discord.Interaction): Discord 交互对象
+        role (discord.Role): 要移除权限的身份组
+    """
     guild_id = str(interaction.guild.id)
     allowed_roles = config_manager.get_guild_config(guild_id).get('allowed_roles', [])
-    if role.id in allowed_roles:  # 如果角色在允许列表中
+    if role.id in allowed_roles:
         allowed_roles.remove(role.id)
-        await config_manager.set_guild_config(guild_id, 'allowed_roles', allowed_roles)  # 更新配置
-        config = config_manager.get_guild_config(guild_id)
-        roles = [interaction.guild.get_role(rid).name for rid in config.get("allowed_roles", []) if interaction.guild.get_role(rid)]
-        logger.info(f"用户 {interaction.user.name} 移除允许角色: {role.name}")
+        await config_manager.set_guild_config(guild_id, 'allowed_roles', allowed_roles)
+        roles = [interaction.guild.get_role(rid).name for rid in allowed_roles if interaction.guild.get_role(rid)]
         await interaction.response.send_message(f'已移除身份组 {role.name} 的命令权限\n当前允许的身份组: {", ".join(roles)}', ephemeral=True)
     else:
-        logger.info(f"用户 {interaction.user.name} 尝试移除不存在的允许角色: {role.name}")
         await interaction.response.send_message(f'身份组 {role.name} 不在允许列表中', ephemeral=True)
 
 @bot.tree.command(name="check_access", description="查看允许使用 Bot 命令的身份组")
-@app_commands.checks.has_permissions(administrator=True)  # 仅限管理员使用
+@app_commands.checks.has_permissions(administrator=True)
+@check_activation()
 async def check_access(interaction: discord.Interaction):
-    """查看允许使用 Bot 命令的角色的斜杠命令"""
+    """
+    查看当前服务器允许使用命令的身份组，仅限管理员。
+    
+    Args:
+        interaction (discord.Interaction): Discord 交互对象
+    """
     guild_id = str(interaction.guild.id)
     config = config_manager.get_guild_config(guild_id)
     allowed_roles = config.get('allowed_roles', [])
     if allowed_roles:
         roles = [interaction.guild.get_role(rid).name for rid in allowed_roles if interaction.guild.get_role(rid)]
-        logger.info(f"用户 {interaction.user.name} 查看允许角色: {', '.join(roles)}")
         await interaction.response.send_message(f'当前允许使用命令的身份组: {", ".join(roles)}', ephemeral=True)
     else:
-        logger.info(f"用户 {interaction.user.name} 查看允许角色: 无")
         await interaction.response.send_message('没有设置允许的身份组', ephemeral=True)
 
 @bot.tree.command(name="warp_msg", description="手动触发 LLM 分析并同步到 Telegram")
 @app_commands.check(is_allowed)
+@check_activation()
 async def warp_msg(interaction: discord.Interaction):
     """
-    手动触发 LLM 分析当前 Ticket 频道的内容，并将结果同步到 Telegram
-    包含时间戳兜底策略：如果无法获取频道创建时间，则使用第一条消息时间
+    手动触发 LLM 分析当前 Ticket 频道的内容，并推送结果到 Telegram。
+    
+    Args:
+        interaction (discord.Interaction): Discord 交互对象
     """
     channel = interaction.channel
     guild_id = str(interaction.guild.id)
     config = config_manager.get_guild_config(guild_id)
-
-    # 检查是否为 Ticket 频道
     if not is_ticket_channel(channel, config):
-        logger.warning(f"用户 {interaction.user.name} 尝试在非 Ticket 频道 {channel.name} 使用 warp_msg")
         await interaction.response.send_message("只能在 Ticket 频道中使用", ephemeral=True)
         return
-
-    # 延迟响应，避免超时
-    await interaction.response.defer(ephemeral=True)
-
-    # 获取频道会话
+    await interaction.response.defer(ephemeral=True)  # 延迟响应，避免超时
     conversation = await get_conversation(channel)
-
-    # 获取时间戳，包含兜底策略
-    channel = interaction.channel
-    creation_time = channel.created_at
-    if creation_time is None:
-        try:
-            async for message in channel.history(limit=1, oldest_first=True):
-                creation_time = message.created_at
-                logger.info(f"采用首条消息的创建时间戳: {creation_time}")
-        except Exception as e:
-            # 如果失败，使用当前时间作为最后兜底
-            logger.error(f"无法获取频道 {channel.name} 的第一条消息时间: {e}")
-            creation_time = datetime.datetime.now(datetime.timezone.utc)
-            logger.info(f"使用当前时间作为频道 {channel.name} 的时间戳: {creation_time}")
-
-    # 执行分析并同步结果
-    if creation_time:
-        problem = await asyncio.to_thread(
-            analyze_ticket_conversation, conversation, channel, guild_id,
-            config, LLM_API_KEY, BASE_URL, MODEL_ID, creation_time
-        )
-        if problem['is_valid']:
-            problem['id'] = await config_manager.get_next_problem_id()
-            tg_channel_id = config.get('tg_channel_id')
-            if tg_channel_id:
-                await telegram_bot.send_problem_form(problem, tg_channel_id)
-                logger.info(f"用户 {interaction.user.name} 手动分析完成，问题 ID: {problem['id']} 已发送到 {tg_channel_id}")
-            await interaction.followup.send(f"问题反馈已生成并同步，ID: {problem['id']}", ephemeral=True)
-        else:
-            logger.info(f"用户 {interaction.user.name} 手动分析结果无效，频道: {channel.name}")
-            await interaction.followup.send("分析结果无效，未生成问题反馈", ephemeral=True)
+    creation_time = channel.created_at or datetime.datetime.now(datetime.timezone.utc)  # 兜底使用当前时间
+    llm_config = config_manager.get_llm_config(guild_id) or {
+        'api_key': DEFAULT_LLM_API_KEY,
+        'model_id': DEFAULT_MODEL_ID,
+        'base_url': DEFAULT_BASE_URL
+    }
+    problem = await asyncio.to_thread(
+        analyze_ticket_conversation, conversation, channel, guild_id,
+        config, llm_config['api_key'], llm_config['base_url'], llm_config['model_id'], creation_time
+    )
+    if problem['is_valid']:
+        problem['id'] = await config_manager.get_next_problem_id()
+        tg_channel_id = config.get('tg_channel_id')
+        if tg_channel_id:
+            await telegram_bot.send_problem_form(problem, tg_channel_id)
+        await interaction.followup.send(f"问题反馈已生成并同步，ID: {problem['id']}", ephemeral=True)
     else:
-        logger.error(f"无法获取频道 {channel.name} 的时间戳")
-        await interaction.followup.send("无法获取频道时间戳", ephemeral=True)
+        await interaction.followup.send("分析结果无效，未生成问题反馈", ephemeral=True)
 
 @bot.tree.command(name="set_timezone", description="设置时区偏移（UTC + x）")
 @app_commands.describe(offset="时区偏移量（整数，例如 8 表示 UTC+8）")
 @app_commands.check(is_allowed)
+@check_activation()
 async def set_timezone(interaction: discord.Interaction, offset: int):
-    """设置时区偏移的斜杠命令，用于调整问题总结中的时间戳"""
+    """
+    设置服务器的时区偏移，用于调整时间戳显示。
+    
+    Args:
+        interaction (discord.Interaction): Discord 交互对象
+        offset (int): UTC 偏移量（如 8 表示 UTC+8）
+    """
     guild_id = str(interaction.guild.id)
-    await config_manager.set_guild_config(guild_id, 'timezone', offset)  # 将时区偏移量存储到配置中
-    config = config_manager.get_guild_config(guild_id)
-    logger.info(f"用户 {interaction.user.name} 设置时区偏移: UTC+{offset}")
-    await interaction.response.send_message(
-        f'时区偏移已设置为 UTC+{offset}\n当前时区偏移: {config.get("timezone", "未设置")}',
-        ephemeral=True
-    )
+    await config_manager.set_guild_config(guild_id, 'timezone', offset)
+    await interaction.response.send_message(f'时区偏移已设置为 UTC+{offset}', ephemeral=True)
 
 @bot.tree.command(name="help", description="显示Bot命令帮助信息")
-@app_commands.check(is_allowed)  # 限制权限，仅允许配置的角色或管理员使用
+@app_commands.check(is_allowed)
 async def help_command(interaction: discord.Interaction):
     """
-    显示Bot所有命令的简述和配置流程，帮助用户快速上手。
-    参数:
-        interaction: Discord交互对象
+    显示所有命令的帮助信息，包含激活和配置流程。
+    
+    Args:
+        interaction (discord.Interaction): Discord 交互对象
     """
     help_text = """
 **Discord Bot 命令帮助**
 
+- **重要: 若想使用 TG推送，需要添加 @hermes_dc_bot 为 TG Channel 的管理员**
+
+**激活命令**
+- `/activate_key <key>` 使用密钥激活 Bot
+- `/activate_llm <api_key> <model_id> <base_url>` 使用自定义 LLM 配置激活 Bot
+
 **必须配置的命令**  
-- `/set_ticket_cate category_ids`  
-  设置Ticket类别ID（用逗号分隔），用于识别Ticket频道。  
-- `/set_monitor_channels channels`  
-  设置监控的General Chat频道ID（最多5个，用逗号分隔）。  
-- `/set_tg_channel tg_channel_id`  
-  设置Telegram推送频道ID，用于接收反馈和总结。  
+- `/set_ticket_cate category_ids` 设置 Ticket 类别 ID
+- `/set_monitor_channels channels` 设置监控频道 ID
+- `/set_tg_channel tg_channel_id` 设置 Telegram 推送频道 ID  
 
 **选择性配置的命令**  
-- `/set_monitor_params period_hours max_messages`  
-  设置General Chat监控周期（小时）和最大消息数。  
-- `/set_access role`  
-  设置允许使用Bot命令的角色（仅限管理员）。  
-- `/remove_access role`  
-  移除允许使用Bot命令的角色（仅限管理员）。  
-- `/set_timezone offset`  
-  设置时区偏移（如8表示UTC+8）。  
-  
+- `/set_monitor_params period_hours max_messages` 设置监控参数
+- `/set_access role` 设置命令权限角色
+- `/remove_access role` 移除权限角色
+- `/set_timezone offset` 设置时区偏移  
+
 **其他命令**  
-- `/warp_msg` 手动触发LLM分析当前Ticket频道并推送至Telegram。  
-
-**查询命令**  
-- `/check_ticket_cate` 查看当前Ticket类别ID。  
-- `/check_monitor_channels` 查看当前监控的频道。  
-- `/check_tg_channel` 查看当前Telegram推送频道。  
-- `/check_monitor_params` 查看当前监控参数。  
-- `/check_access` 查看允许使用命令的角色。  
-
-**配置流程**  
-1. 使用 `/set_ticket_cate` 设置Ticket类别。  
-2. 使用 `/set_monitor_channels` 设置监控频道。  
-3. 使用 `/set_tg_channel` 设置Telegram推送目标。  
-4. （可选）使用 `/set_monitor_params` 调整监控参数。  
-5. （可选）使用 `/set_access` 限制命令权限。  
-6. （可选）使用 `/set_timezone` 设置时区。  
+- `/warp_msg` 手动分析 Ticket 频道并推送  
+- `/check_*` 查询各项配置  
 """
-    await interaction.response.send_message(help_text, ephemeral=True)  # 消息仅对使用者可见
+    await interaction.response.send_message(help_text, ephemeral=True)
 
-
-# 创建 Telegram Bot 实例
-telegram_bot = TelegramBot(TELEGRAM_TOKEN, config_manager, bot, LLM_API_KEY, BASE_URL, MODEL_ID)
+# 创建 Telegram Bot 实例，传入默认 LLM 配置
+telegram_bot = TelegramBot(TELEGRAM_TOKEN, config_manager, bot, DEFAULT_LLM_API_KEY, DEFAULT_BASE_URL, DEFAULT_MODEL_ID)
 
 async def heartbeat_task():
-    """心跳任务，每分钟记录一次日志以确认 Bot 运行状态，固定使用 UTC+8"""
-    tz = pytz.timezone('Asia/Shanghai')  # 设置时区为 UTC+8（中国标准时间）
+    """
+    心跳任务，每分钟记录一次日志以确认 Bot 运行状态，使用固定 UTC+8 时区。
+    """
+    tz = pytz.timezone('Asia/Shanghai')  # 设置时区为 UTC+8
     lasting_mins = 0
     while True:
-        local_time = datetime.datetime.now(tz).strftime("%Y-%m-%d %H:%M") + f" UTC+8"  # 获取当前 UTC+8 时间
+        local_time = datetime.datetime.now(tz).strftime("%Y-%m-%d %H:%M") + " UTC+8"
         lasting_mins += 1
-        heartbeat_logger.info(f"Bot alive at {local_time}, lasting for {lasting_mins} mins")  # 记录带时间戳的心跳日志
-        await asyncio.sleep(60)  # 每60秒记录一次
+        heartbeat_logger.info(f"Bot alive at {local_time}, lasting for {lasting_mins} mins")
+        await asyncio.sleep(60)  # 每 60 秒记录一次
 
 async def main():
-    """主程序：启动 Discord Bot、Telegram Bot 和心跳任务"""
+    """
+    主程序入口，启动 Discord Bot、Telegram Bot 和心跳任务。
+    """
     logger.info(f"启动 Discord Bot，Token: {DISCORD_TOKEN[:5]}...")
     logger.info(f"启动 Telegram Bot，Token: {TELEGRAM_TOKEN[:5]}...")
-    logger.info(f"LLM 配置 - API Key: {LLM_API_KEY[:5]}..., Base URL: {BASE_URL}, Model ID: {MODEL_ID}")
-    asyncio.create_task(heartbeat_task())  # 启动心跳任务
+    logger.info(f"激活密钥配置: {MY_ACTIVE_KEY[:5]}...（已隐藏后缀）")  # 仅记录密钥前5位
+    asyncio.create_task(heartbeat_task())
     await asyncio.gather(
-        bot.start(DISCORD_TOKEN),  # 启动 Discord Bot
-        telegram_bot.run()  # 启动 Telegram Bot
+        bot.start(DISCORD_TOKEN),
+        telegram_bot.run()
     )
 
 if __name__ == "__main__":
