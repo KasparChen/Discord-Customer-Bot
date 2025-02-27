@@ -46,12 +46,12 @@ class TelegramBot:
         # 构建简洁的 HTML 格式消息
         form = (
             f"<b>----- Issue #{problem['id']} -----</b>\n\n"  # 使用 <b> 标签加粗标题
-            f"类型:<b>{problem['problem_type']}</b>\n\n"
-            f"来源:<b>{problem['source']}</b>\n\n"
-            f"时间:<b>{problem['timestamp']}</b>\n\n"
-            f"简述:{problem['summary']}\n\n"
-            f"详情:{problem['details']}\n\n"
-            f"<a href=\"{problem['link']}\"><em>🔗 跳转至 Ticket</em></a>\n"  # 简洁的超链接
+            f"类型: <b>{problem['problem_type']}</b>\n\n"
+            f"来源: <b>{problem['source']}</b>\n\n"
+            f"时间: <b>{problem['timestamp']}</b>\n\n"
+            f"简述: {problem['summary']}\n\n"
+            f"详情: {problem['details']}\n"
+            f"<a href=\"{problem['link']}\"><em>🔗跳转至 Ticket</em></a>\n"  # 简洁的超链接
             f"------------------------------------------"
         )
         
