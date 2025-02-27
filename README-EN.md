@@ -1,4 +1,4 @@
-# Discord-Customer-Bot
+# Discord Customer Bot -- Hermers
 
 A tailored Discord community tool for summarizing user issues, featuring intelligent Ticket validation and refinement, alongside periodic monitoring of General Chat for problems and sentiment.
 

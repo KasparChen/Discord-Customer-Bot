@@ -1,4 +1,4 @@
-# Discord-Customer-Bot
+# Discord Customer Bot -- Hermers
 
 一个专为 Discord 社区设计的用户问题总结工具，通过智能分析 Ticket 和 General Chat 对话，助力小团队高效管理用户需求。
 
