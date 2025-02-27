@@ -7,11 +7,12 @@ class Problem(BaseModel):
     summary: str  # 问题简述，简明扼要
     source: str  # 来源，通常是 Ticket 频道名称
     user: str  # 提出问题的用户
-    timestamp: str  # 首次发言的时间戳
+    timestamp: str  # 首次发言的时间戳，格式为 yyyy-mm-dd HH:MM UTC+{x}
     details: str  # 问题详情，客观转述对话
     original: str  # 原始对话内容
     is_valid: bool  # 是否有效
     id: int = 0  # 问题 ID，默认值为 0
+    link: str = ""  # 新增：Ticket channel 的跳转链接，格式为 Discord URL
 
 # General Chat 总结模型
 class GeneralSummary(BaseModel):

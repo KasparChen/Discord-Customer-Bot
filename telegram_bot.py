@@ -7,6 +7,7 @@ import datetime
 from config_manager import ConfigManager
 from llm_analyzer import analyze_general_conversation
 from utils import get_conversation
+from datetime import timezone, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -38,14 +39,15 @@ class TelegramBot:
         form = (
             f"--- Issue Summary #{problem['id']} ---\n"
             f"问题类型: {problem['problem_type']}\n"
-            f"问题简述: {problem['summary']}\n"
             f"来源: {problem['source']}\n"
-            f"时间: {problem['timestamp']}\n"
+            f"时间: {problem['timestamp']}\n"  # 使用格式化后的时间戳 yyyy-mm-dd HH:MM UTC+{x}
+            f"问题简述: {problem['summary']}\n"
             f"问题详情: {problem['details']}\n"
+            f"[>>跳转至Ticket<<]({problem['link']})\n"  # 新增：以 Markdown 超链接形式添加跳转链接
             f"-----------------------------"
         )
         try:
-            await self.application.bot.send_message(chat_id=tg_channel_id, text=form)  # 发送消息
+            await self.application.bot.send_message(chat_id=tg_channel_id, text=form, parse_mode='Markdown')
             logger.info(f"问题已发送到 {tg_channel_id}: {problem['problem_type']}")
         except Exception as e:
             logger.error(f"发送问题到 {tg_channel_id} 失败: {e}")
@@ -54,7 +56,7 @@ class TelegramBot:
         """将 General Chat 总结发送到指定的 Telegram 频道"""
         form = (
             f"===== Chat Summary =====\n"
-            f"发布时间: {summary['publish_time']}\n"
+            f"发布时间: {summary['publish_time']}\n"  # 使用格式化后的时间戳 yyyy-mm-dd HH:MM UTC+{x}
             f"监控周期: {summary['monitor_period']}\n"
             f"监控消息数: {summary['monitored_messages']}\n"
             f"周期内消息数: {summary['total_messages']}\n"
@@ -64,7 +66,7 @@ class TelegramBot:
             f"========================="
         )
         try:
-            await self.application.bot.send_message(chat_id=tg_channel_id, text=form)  # 发送消息
+            await self.application.bot.send_message(chat_id=tg_channel_id, text=form)
             logger.info(f"General Chat 总结已发送到 {tg_channel_id}")
         except Exception as e:
             logger.error(f"发送总结到 {tg_channel_id} 失败: {e}")
@@ -91,8 +93,12 @@ class TelegramBot:
                                 conversation, channel, guild_id, config,
                                 self.llm_api_key, self.base_url, self.model_id
                             )
-                            # 添加额外信息到总结
-                            summary['publish_time'] = datetime.datetime.now().isoformat()
+                            # 获取时区偏移并格式化发布时间
+                            timezone_offset = config.get('timezone', 0)
+                            tz = timezone(timedelta(hours=timezone_offset))
+                            local_time = datetime.datetime.now(tz)
+                            formatted_publish_time = local_time.strftime("%Y-%m-%d %H:%M") + f" UTC+{timezone_offset}"
+                            summary['publish_time'] = formatted_publish_time
                             summary['monitor_period'] = f"{period_hours} 小时"
                             summary['monitored_messages'] = monitored_messages
                             summary['total_messages'] = total_messages
@@ -158,7 +164,7 @@ class TelegramBot:
                 with open('heartbeat.log', 'r') as f:
                     lines = f.readlines()
                     if lines:
-                        latest_log = lines[-1].strip()  # 获取最新一行日志
+                        latest_log = lines[-1].strip()  # 获取最新一行日志，已包含 UTC+8 时间戳
                         for chat_id in self.heartbeat_channels:
                             try:
                                 await self.application.bot.send_message(chat_id=chat_id, text=f"心跳日志: {latest_log}")

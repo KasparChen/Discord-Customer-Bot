@@ -4,7 +4,7 @@ from langchain.output_parsers import PydanticOutputParser
 from models import Problem, GeneralSummary
 import logging
 from utils import is_ticket_channel
-from datetime import datetime, timezone, timedelta  # 新增，用于处理时区偏移
+from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +41,7 @@ def analyze_ticket_conversation(conversation, channel, guild_id, config, llm_api
         "- user（提出问题的用户）"
         "- original（原始对话内容）"
         "- is_valid（是否有效，true/false）"
-        "注意：timestamp 字段将由系统提供，不需要生成。"
+        "注意：timestamp 和 link 字段将由系统提供，不需要生成。"
         "如果无效，返回 is_valid: false 并简要说明原因。"
     )
     
@@ -61,7 +61,12 @@ def analyze_ticket_conversation(conversation, channel, guild_id, config, llm_api
     timezone_offset = config.get('timezone', 0)
     tz = timezone(timedelta(hours=timezone_offset))  # 根据偏移量创建时区对象
     local_time = creation_time.astimezone(tz)  # 将创建时间调整为指定时区
-    problem.timestamp = local_time.isoformat()  # 设置时间戳为 ISO 格式
+    # 格式化时间戳为 yyyy-mm-dd HH:MM UTC+{x}
+    formatted_timestamp = local_time.strftime("%Y-%m-%d %H:%M") + f" UTC+{timezone_offset}"
+    problem.timestamp = formatted_timestamp
+    
+    # 新增：设置 Discord ticket channel 的链接
+    problem.link = f"https://discord.com/channels/{guild_id}/{channel.id}"
     
     # 记录分析完成日志
     logger.info(f"对话分析完成，发现问题: {problem.problem_type}")
