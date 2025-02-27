@@ -573,6 +573,11 @@ async def main():
     logger.info(f"启动 Discord Bot，Token: {DISCORD_TOKEN[:5]}...")
     logger.info(f"启动 Telegram Bot，Token: {TELEGRAM_TOKEN[:5]}...")
     logger.info(f"激活密钥配置: {MY_ACTIVE_KEY[:5]}...（已隐藏后缀）")  # 仅记录密钥前5位
+    
+    # 在事件循环运行后保存初始配置（如果有新生成的 encryption_key）
+    await config_manager.save_config()
+    logger.info("初始配置已保存至 config.json")
+    
     asyncio.create_task(heartbeat_task())
     await asyncio.gather(
         bot.start(DISCORD_TOKEN),

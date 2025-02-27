@@ -13,45 +13,36 @@ class ConfigManager:
         """
         初始化配置管理器，加载配置并设置加密密钥。
         - 如果配置文件不存在，则创建默认配置。
-        - 生成或加载用于加密 API key 的密钥。
+        - 生成或加载用于加密 API key 的密钥，但不立即保存（留给调用者处理）。
         """
-        self.config = self.load_config()  # 加载配置文件内容
-        self.problem_id_counter = self.config.get('problem_id_counter', 0)  # 初始化问题 ID 计数器，默认值为 0
-        # 获取或生成加密密钥，用于保护敏感数据（如 API key）
+        self.config = self.load_config()  # 同步加载配置
+        self.problem_id_counter = self.config.get('problem_id_counter', 0)
+        # 获取或生成加密密钥
         self.encryption_key = self.config.get('encryption_key')
         if not self.encryption_key:
-            # 如果配置文件中没有密钥，则生成一个新的密钥并保存
-            self.encryption_key = Fernet.generate_key().decode()  # 生成安全的随机密钥并转换为字符串
+            # 生成新密钥，但不异步保存
+            self.encryption_key = Fernet.generate_key().decode()
             self.config['encryption_key'] = self.encryption_key
-            asyncio.create_task(self.save_config())  # 异步保存密钥到配置文件
-        self.cipher = Fernet(self.encryption_key.encode())  # 初始化加密器，用于加密/解密
+            # 注意：这里不再调用 save_config，留给外部异步上下文处理
+        self.cipher = Fernet(self.encryption_key.encode())
 
     def load_config(self):
-        """
-        从文件加载配置，若文件不存在则返回默认配置。
-        
-        Returns:
-            dict: 配置字典，包含 telegram_users、guilds、problem_id_counter 和 is_activated 等字段
-        """
+        """从文件加载配置，若不存在则返回默认配置"""
         if os.path.exists(CONFIG_FILE):
             with open(CONFIG_FILE, 'r') as f:
-                return json.load(f)  # 读取并解析 JSON 配置文件
-        # 返回默认配置，包含基本字段和未激活状态
+                return json.load(f)
         return {
-            'telegram_users': {},  # 存储 Telegram 用户相关配置
-            'guilds': {},  # 存储 Discord 服务器配置
-            'problem_id_counter': 0,  # 全局问题 ID 计数器
-            'is_activated': False  # Bot 是否激活的标志，默认为未激活
+            'telegram_users': {},
+            'guilds': {},
+            'problem_id_counter': 0,
+            'is_activated': False
         }
 
     async def save_config(self):
-        """
-        异步保存配置到文件，使用锁防止并发写入冲突。
-        - 将当前配置以 JSON 格式写入 config.json，缩进为 4 以提高可读性。
-        """
-        async with config_lock:  # 使用异步锁确保线程安全
+        """异步保存配置到文件，使用锁防止并发写入冲突"""
+        async with config_lock:
             with open(CONFIG_FILE, 'w') as f:
-                json.dump(self.config, f, indent=4)  # 写入格式化的 JSON 数据
+                json.dump(self.config, f, indent=4)
 
     def get_guild_config(self, guild_id):
         """
