@@ -51,6 +51,7 @@ class TelegramBot:
         self.default_base_url = default_base_url
         self.default_model_id = default_model_id
         self.heartbeat_channels = set()  # 存储启用了心跳日志接收的 Telegram 频道 ID
+        self.is_polling = False  # 标志位，跟踪轮询状态
         logger.info("Telegram Bot 初始化完成")
 
     async def send_problem_form(self, problem, tg_channel_id):
@@ -127,7 +128,7 @@ class TelegramBot:
                     for channel_id in monitor_channels:
                         channel = guild.get_channel(channel_id)
                         if channel:
-                            period_hours = config.get('monitor_period', 3)  # 默认 3 小时
+                            period_hours = config.get('monitor_period', 2)  # 默认 2 小时
                             max_messages = config.get('monitor_max_messages', 100)  # 默认 100 条
                             since = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=period_hours)
                             messages = [msg async for msg in channel.history(limit=None, after=since)]
@@ -239,17 +240,37 @@ class TelegramBot:
         启动 Telegram Bot 的主循环，注册命令并开始轮询。
         """
         logger.info("Telegram Bot 启动中...")
+        
+        # 检查是否已在轮询
+        if self.is_polling:
+            logger.warning("Telegram Bot 已在轮询中，跳过重复启动")
+            return
+        
         # 注册 Telegram 命令处理器
         self.application.add_handler(CommandHandler('get_group_id', self.get_group_id))
         self.application.add_handler(CommandHandler('current_binding', self.current_binding))
         self.application.add_handler(CommandHandler('heartbeat_on', self.heartbeat_on))
         self.application.add_handler(CommandHandler('heartbeat_off', self.heartbeat_off))
+        
         # 启动定期任务
         asyncio.create_task(self.periodic_general_analysis())
         asyncio.create_task(self.send_heartbeat_logs())
-        # 初始化并运行 Telegram Bot
-        await self.application.initialize()
-        await self.application.start()
-        await self.application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
-        logger.info("Telegram Bot 已启动")
-        await asyncio.Event().wait()  # 保持运行
+        
+        try:
+            await self.application.initialize()
+            await self.application.start()
+            logger.info("准备启动 Telegram 轮询...")
+            self.is_polling = True
+            await self.application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
+            logger.info("Telegram Bot 已启动并开始轮询")
+            await asyncio.Event().wait()  # 保持运行
+        except Exception as e:
+            self.is_polling = False
+            if "Conflict" in str(e):
+                logger.error(f"Telegram 轮询冲突: {e} - 请确保没有其他实例使用相同 TOKEN，或者等待之前的轮询终止")
+            else:
+                logger.error(f"Telegram Bot 启动失败: {e}")
+            raise
+        finally:
+            self.is_polling = False
+            logger.info("Telegram Bot 轮询已停止")

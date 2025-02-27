@@ -396,7 +396,7 @@ async def check_monitor_params(interaction: discord.Interaction):
     """
     guild_id = str(interaction.guild.id)
     config = config_manager.get_guild_config(guild_id)
-    period = config.get('monitor_period', 3)  # 默认 3 小时
+    period = config.get('monitor_period', 2)  # 默认 2 小时
     max_messages = config.get('monitor_max_messages', 100)  # 默认 100 条
     await interaction.response.send_message(f'当前监控周期: {period} 小时，最大消息条数: {max_messages}', ephemeral=True)
 
@@ -579,10 +579,19 @@ async def main():
     logger.info("初始配置已保存至 config.json")
     
     asyncio.create_task(heartbeat_task())
-    await asyncio.gather(
-        bot.start(DISCORD_TOKEN),
-        telegram_bot.run()
-    )
+    
+    # 独立运行 Telegram Bot
+    telegram_task = asyncio.create_task(telegram_bot.run())
+    
+    try:
+        # 运行 Discord Bot
+        await bot.start(DISCORD_TOKEN)
+    except Exception as e:
+        logger.error(f"Discord Bot 运行失败: {e}")
+        telegram_task.cancel()  # 如果 Discord 失败，取消 Telegram 任务
+        raise
+    finally:
+        await telegram_task  # 确保 Telegram 任务完成
 
 if __name__ == "__main__":
     try:
