@@ -577,10 +577,22 @@ async def warp_msg(interaction: discord.Interaction):
     channel = interaction.channel
     guild_id = str(interaction.guild.id)
     config = config_manager.get_guild_config(guild_id)
+    
+    # 检查是否为 Ticket 频道
     if not is_ticket_channel(channel, config):
         await interaction.response.send_message("Can only be used in Ticket Channel.", ephemeral=True)
         return
+    
+    # 检查 warp_msg 权限（已在 @app_commands.check(is_warp_msg_allowed) 中处理，但这里保留逻辑一致性）
+    if not is_warp_msg_allowed(interaction):
+        await interaction.response.send_message("You do not have accesce to use this command. Please contact the administrator to obtain permissions。", ephemeral=True)
+        logger.info(f"用户 {interaction.user.name} 尝试使用 warp_msg 但权限不足")
+        return
+    
+    # defer 响应，避免超时
     await interaction.response.defer(ephemeral=True)
+    
+    # 获取对话内容并分析
     conversation = await get_conversation(channel)
     creation_time = channel.created_at or datetime.datetime.now(datetime.timezone.utc)
     llm_config = config_manager.get_llm_config(guild_id) or {
@@ -592,6 +604,8 @@ async def warp_msg(interaction: discord.Interaction):
         analyze_ticket_conversation, conversation, channel, guild_id,
         config, llm_config['api_key'], llm_config['base_url'], llm_config['model_id'], creation_time
     )
+    
+    # 处理分析结果
     if problem['is_valid']:
         problem['id'] = await config_manager.get_next_problem_id()
         tg_channel_id = config.get('tg_channel_id')
