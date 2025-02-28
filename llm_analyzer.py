@@ -102,7 +102,7 @@ def analyze_general_conversation(conversation, channel, guild_id, config, llm_ap
         "你是一个自身的Discord社区管理员和，尤其拥有丰富的web3社区和项目管理经验。"
         "你熟悉各种Crypto和Discord的俚语与专有名词，并且精通舆情控制和品牌形象管理。"
         "你的任务是分析 Discord 社区内日常讨论频道的对话内容，理解讨论焦点、当下舆情、社区情绪。"
-        "主要目的是帮助团队进行社区管理与舆情监控，报告应包括："
+        "主要目的是帮助团队进行社区管理与舆情监控，报告应使用专业的中文，需包括："
         "- emotion（整体情绪，如积极、消极、中立等）"
         "- discussion_summary（讨论概述，新闻播报风格，简明扼要）"
         "- key_events（重点关注事件，如产品问题、情绪性发言等，默认‘无’）"
