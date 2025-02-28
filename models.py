@@ -20,3 +20,4 @@ class GeneralSummary(BaseModel):
     emotion: str  # 整体情绪
     discussion_summary: str  # 讨论概述
     key_events: str  # 重点关注事件
+    suggestion: str #当前建议

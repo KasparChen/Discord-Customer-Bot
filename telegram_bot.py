@@ -100,7 +100,8 @@ class TelegramBot:
             f"周期内消息数: <b>{summary['total_messages']}</b>\n\n"
             f"情绪: <b>{summary['emotion']}</b>\n\n"
             f"讨论概述: {summary['discussion_summary']}\n\n"
-            f"重点关注事件: {summary['key_events']}\n"
+            f"重点关注事件: {summary['key_events']}\n\n"
+            f"建议: {summary['suggestion']}\n"
             f"============================"
         )
         try:
@@ -112,50 +113,64 @@ class TelegramBot:
     async def periodic_general_analysis(self):
         """
         定期分析 Discord General Chat 频道并发送总结到 Telegram。
-        - 每 2 小时（7200秒）执行一次。
+        - 监控周期根据每个服务器的 monitor_period 动态调整，确保监控周期=回溯周期。
         - 如果 Bot 未激活，则跳过分析。
         """
         while True:
             if not self.config_manager.is_bot_activated():
                 logger.info("Bot 未激活，跳过 General Chat 分析")
-                await asyncio.sleep(7200)
+                await asyncio.sleep(60)  # 未激活时每分钟检查一次，避免频繁空转
                 continue
+            
             guilds_config = self.config_manager.config.get('guilds', {})
+            min_sleep = float('inf')  # 用于记录下次最早执行时间
+            
             for guild_id, config in guilds_config.items():
                 guild = self.discord_bot.get_guild(int(guild_id))
-                if guild:
-                    monitor_channels = config.get('monitor_channels', [])
-                    for channel_id in monitor_channels:
-                        channel = guild.get_channel(channel_id)
-                        if channel:
-                            period_hours = config.get('monitor_period', 2)  # 默认 2 小时
-                            max_messages = config.get('monitor_max_messages', 100)  # 默认 100 条
-                            since = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=period_hours)
-                            messages = [msg async for msg in channel.history(limit=None, after=since)]
-                            total_messages = len(messages)
-                            monitored_messages = min(total_messages, max_messages)
-                            conversation = await get_conversation(channel, limit=monitored_messages)
-                            llm_config = self.config_manager.get_llm_config(guild_id) or {
-                                'api_key': self.default_llm_api_key,
-                                'model_id': self.default_model_id,
-                                'base_url': self.default_base_url
-                            }
-                            summary = analyze_general_conversation(
-                                conversation, channel, guild_id, config,
-                                llm_config['api_key'], llm_config['base_url'], llm_config['model_id']
-                            )
-                            timezone_offset = config.get('timezone', 0)
-                            tz = timezone(timedelta(hours=timezone_offset))
-                            local_time = datetime.datetime.now(tz)
-                            formatted_publish_time = local_time.strftime("%Y-%m-%d %H:%M") + f" UTC+{timezone_offset}"
-                            summary['publish_time'] = formatted_publish_time
-                            summary['monitor_period'] = f"{period_hours} 小时"
-                            summary['monitored_messages'] = monitored_messages
-                            summary['total_messages'] = total_messages
-                            tg_channel_id = config.get('tg_channel_id')
-                            if tg_channel_id:
-                                await self.send_general_summary(summary, tg_channel_id)
-            await asyncio.sleep(7200)  # 每 2 小时执行一次
+                if not guild:
+                    continue
+                
+                monitor_channels = config.get('monitor_channels', [])
+                period_hours = config.get('monitor_period', 2)  # 默认 2 小时
+                period_seconds = period_hours * 3600  # 转换为秒
+                
+                for channel_id in monitor_channels:
+                    channel = guild.get_channel(channel_id)
+                    if channel:
+                        max_messages = config.get('monitor_max_messages', 100)  # 默认 100 条
+                        since = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=period_hours)
+                        messages = [msg async for msg in channel.history(limit=None, after=since)]
+                        total_messages = len(messages)
+                        monitored_messages = min(total_messages, max_messages)
+                        conversation = await get_conversation(channel, limit=monitored_messages)
+                        llm_config = self.config_manager.get_llm_config(guild_id) or {
+                            'api_key': self.default_llm_api_key,
+                            'model_id': self.default_model_id,
+                            'base_url': self.default_base_url
+                        }
+                        summary = analyze_general_conversation(
+                            conversation, channel, guild_id, config,
+                            llm_config['api_key'], llm_config['base_url'], llm_config['model_id']
+                        )
+                        timezone_offset = config.get('timezone', 0)
+                        tz = timezone(timedelta(hours=timezone_offset))
+                        local_time = datetime.datetime.now(tz)
+                        formatted_publish_time = local_time.strftime("%Y-%m-%d %H:%M") + f" UTC+{timezone_offset}"
+                        summary['publish_time'] = formatted_publish_time
+                        summary['monitor_period'] = f"{period_hours} 小时"
+                        summary['monitored_messages'] = monitored_messages
+                        summary['total_messages'] = total_messages
+                        tg_channel_id = config.get('tg_channel_id')
+                        if tg_channel_id:
+                            await self.send_general_summary(summary, tg_channel_id)
+                
+                # 更新下次最早执行时间
+                min_sleep = min(min_sleep, period_seconds)
+            
+            # 等待下次执行，使用所有服务器中最短的周期
+            sleep_duration = min_sleep if min_sleep != float('inf') else 7200  # 默认 2 小时
+            logger.info(f"下次 General Chat 分析将在 {sleep_duration / 3600} 小时后执行")
+            await asyncio.sleep(sleep_duration)
 
     async def get_group_id(self, update: Update, context):
         """

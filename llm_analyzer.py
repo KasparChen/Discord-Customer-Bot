@@ -33,8 +33,9 @@ def analyze_ticket_conversation(conversation, channel, guild_id, config, llm_api
     
     # 系统提示，指导 LLM 分析对话并生成结构化输出
     system_prompt = (
-        "你是一个智能助手，任务是分析 Discord Ticket 中的对话内容，判断是否构成有效问题。"
-        "如果内容有效，请以 JSON 格式返回以下字段："
+        "你是一个自身的Discord社区管理员，尤其拥有丰富的web3社区和项目管理经验，熟悉各种Crypto和Discord的俚语与专有名词。"
+        "你的任务是分析 Discord 社区内  Ticket 中的对话内容，判断其是否构成有效问题。"
+        "如果内容属于有效的问题，请使用专业的媒体风格的中文，以 JSON 格式返回以下字段："
         "- problem_type（问题类型，如功能建议、Bug 报告等）"
         "- summary（问题简述，简明扼要、一针见血）"
         "- details（问题详情，客观转述对话内容）"
@@ -98,11 +99,14 @@ def analyze_general_conversation(conversation, channel, guild_id, config, llm_ap
     
     # 系统提示，指导 LLM 分析 General Chat 对话
     system_prompt = (
-        "你是一个智能助手，分析 Discord General Chat 对话，生成总结报告。"
-        "报告应包括："
+        "你是一个自身的Discord社区管理员和，尤其拥有丰富的web3社区和项目管理经验。"
+        "你熟悉各种Crypto和Discord的俚语与专有名词，并且精通舆情控制和品牌形象管理。"
+        "你的任务是分析 Discord 社区内日常讨论频道的对话内容，理解讨论焦点、当下舆情、社区情绪。"
+        "主要目的是帮助团队进行社区管理与舆情监控，报告应包括："
         "- emotion（整体情绪，如积极、消极、中立等）"
         "- discussion_summary（讨论概述，新闻播报风格，简明扼要）"
         "- key_events（重点关注事件，如产品问题、情绪性发言等，默认‘无’）"
+        "- suggestion（针对当前情况的一针见血的建议，通常无特殊情况保持为空）"
     )
     
     # 用户提示，包含解析器格式说明和对话内容

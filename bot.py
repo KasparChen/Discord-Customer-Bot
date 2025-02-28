@@ -578,7 +578,7 @@ async def warp_msg(interaction: discord.Interaction):
     guild_id = str(interaction.guild.id)
     config = config_manager.get_guild_config(guild_id)
     if not is_ticket_channel(channel, config):
-        await interaction.response.send_message("只能在 Ticket 频道中使用", ephemeral=True)
+        await interaction.response.send_message("Can only be used in Ticket Channel.", ephemeral=True)
         return
     await interaction.response.defer(ephemeral=True)
     conversation = await get_conversation(channel)
@@ -597,9 +597,9 @@ async def warp_msg(interaction: discord.Interaction):
         tg_channel_id = config.get('tg_channel_id')
         if tg_channel_id:
             await telegram_bot.send_problem_form(problem, tg_channel_id)
-        await interaction.followup.send(f"问题反馈已生成并同步，ID: {problem['id']}", ephemeral=True)
+        await interaction.followup.send(f"Ticket is successfully warpped to the Team, ID: {problem['id']}", ephemeral=True)
     else:
-        await interaction.followup.send("分析结果无效，未生成问题反馈", ephemeral=True)
+        await interaction.followup.send("No vaild issue is detected.", ephemeral=True)
 
 @bot.tree.command(name="set_timezone", description="设置时区偏移（UTC + x）")
 @app_commands.describe(offset="时区偏移量（整数，例如 8 表示 UTC+8）")
